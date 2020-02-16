@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<!-- Made for a 780x580 window -->
+
+<head>
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <script src="js/jquery-3.4.1.slim.min.js"></script>
+    <link rel="stylesheet" href="css/bootstrap.min.css">
+    <script src="js/bootstrap.min.js"></script>
+    <style>
+        /* Disable text selection */
+        .noselect {
+            -webkit-touch-callout: none;
+            /* iOS Safari */
+            -webkit-user-select: none;
+            /* Safari */
+            -khtml-user-select: none;
+            /* Konqueror HTML */
+            -moz-user-select: none;
+            /* Firefox */
+            -ms-user-select: none;
+            /* Internet Explorer/Edge */
+            user-select: none;
+            /* Non-prefixed version, currently supported by Chrome and Opera */
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Top Navbar -->
+    <nav class="navbar navbar-expand-md navbar-dark bg-dark">
+        <div class="navbar-collapse collapse w-100 order-1 order-md-0 dual-collapse2">
+            <ul class="navbar-nav mr-auto">
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" id="navbarDropdown" role="button"
+                        data-toggle="dropdown" aria-haspopup="true" aria-expanded="false">
+                        More
+                    </a>
+                    <div class="dropdown-menu" aria-labelledby="navbarDropdown">
+                        <a class="dropdown-item" href="#" onclick="external.invoke('cancel_update')">Cancel ongoing
+                            updates</a>
+                        <div class="dropdown-divider"></div>
+                        <a class="dropdown-item" href="#" onclick="external.invoke('reset_cache')" data-toggle="modal"
+                            data-target="#cacheResetModal">Reset update cache</a>
+                    </div>
+                </li>
+            </ul>
+        </div>
+        <div class="mx-auto order-0">
+            <a class="navbar-brand mx-auto" href="#">RPatchur</a>
+            <button class="navbar-toggler" type="button" data-toggle="collapse" data-target=".dual-collapse2">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+        </div>
+        <div class="navbar-collapse collapse w-100 order-3 dual-collapse2">
+            <ul class="navbar-nav ml-auto">
+                <li class="nav-item">
+                    <div class="btn-group shadow-sm" role="group">
+                        <button type="button" class="btn btn-success" onclick="external.invoke('play')">Play</button>
+                        <button type="button" class="btn btn-primary" onclick="external.invoke('setup')">Setup</button>
+                        <button button type="button" class="btn btn-danger"
+                            onclick="external.invoke('exit')">Exit</button>
+                    </div>
+                </li>
+            </ul>
+        </div>
+    </nav>
+    <div class="progress position-relative rounded-0 shadow-sm" id="download-progress">
+        <small class="justify-content-center d-flex position-absolute w-100">43%</small>
+        <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar"
+            style="width: 43%;" aria-valuenow="43" aria-valuemin="0" aria-valuemax="100"></div>
+    </div>
+
+    <div class="container-fluid mt-3 mb-3 noselect">
+        <div class="card-group shadow-sm">
+            <!-- Card #1 -->
+            <div class="card">
+                <img src="images/card1.png" class="card-img-top" alt="...">
+                <div class="card-body">
+                    <h5 class="card-title">Patch Notes for 22 October 2019</h5>
+                    <p class="card-text">Here are some of the changes and updates
+                        after the server maintenance.</p>
+                </div>
+                <div class="card-footer">
+                    <small class="text-muted">2019-10-19 11:29:31</small>
+                </div>
+            </div>
+
+            <!-- Card #2 -->
+            <div class="card">
+                <img src="images/card2.png" class="card-img-top" alt="...">
+                <div class="card-body">
+                    <h5 class="card-title">Player Ban List for 28 November 2019</h5>
+                    <p class="card-text">To mitigate the appearance of bots in our community
+                        which affects gameplay, trades, and competition,
+                        we are reinforcing heightened security to ensure protection
+                        in the lands of Valhalla.</p>
+                </div>
+                <div class="card-footer">
+                    <small class="text-muted">2019-11-29 09:09:01</small>
+                </div>
+            </div>
+
+            <!-- Card #3 -->
+            <div class="card">
+                <img src="images/card3.jpg" class="card-img-top" alt="...">
+                <div class="card-body">
+                    <h5 class="card-title">Christmas Invasion - The Nightmare Before Christmas</h5>
+                    <p class="card-text">Cloaked in darkness, a mysterious figure has appeared
+                        to terrorize the holidays.</p>
+                </div>
+                <div class="card-footer">
+                    <small class="text-muted">2019-12-06 06:37:59</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache reset confirmation modal -->
+    <div class="modal fade noselect" id="cacheResetModal" tabindex="-1" role="dialog"
+        aria-labelledby="exampleModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="exampleModalLabel">Cache Reset</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    Update cache has been cleared!<br />
+                    You can now restart the patcher to update.
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-dismiss="modal">Ok</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+
+</html>
