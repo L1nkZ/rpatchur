@@ -11,4 +11,6 @@ serde = { version = "1.0", features = ["derive"] }
 reqwest = { version = "0.10", features = ["blocking"] }
 url = "2.1"
 tempfile = "3"
-tar = "0.4"
+nom = "^5.1"
+flate2 = "1.0"
+encoding = "0.2"

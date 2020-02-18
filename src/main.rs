@@ -1,9 +1,10 @@
 extern crate serde;
 extern crate serde_json;
-extern crate tar;
 extern crate tempfile;
 extern crate url;
 extern crate web_view;
+
+mod thor;
 
 use std::fs::File;
 use std::io::prelude::*;
@@ -13,7 +14,7 @@ use std::process::Command;
 use std::thread;
 
 use serde::Deserialize;
-use tar::Archive;
+use thor::*;
 use url::Url;
 use web_view::*;
 
@@ -183,26 +184,28 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
         println!("Done");
         // Proceed with actual patching
         println!("Applying patches...");
-        for pending_patch in pending_patch_queue {
+        for mut pending_patch in pending_patch_queue {
             println!("Processing {}", pending_patch.info.file_name);
-            let mut archive = Archive::new(pending_patch.local_file);
-            let file_entries = match archive.entries() {
+            let mut buf: Vec<u8> = vec![];
+            let _bytes_read = match pending_patch.local_file.read_to_end(&mut buf) {
                 Ok(v) => v,
                 Err(_) => {
-                    println!(
-                        "'{}' is not of the expected format, aborting.",
-                        pending_patch.info.file_name
-                    );
-                    return;
+                    println!("Cannot read '{}', aborting.", pending_patch.info.file_name);
+                    break;
                 }
             };
-            for entry in file_entries {
-                let entry = entry.unwrap();
-                println!(
-                    "{:?} - {}",
-                    entry.header().path().unwrap(),
-                    entry.header().size().unwrap()
-                );
+            let res_thor = parse_thor_patch(buf.as_mut_slice());
+            match res_thor {
+                Ok((_output, patch)) => {
+                    println!("{:?}", patch);
+                }
+                Err(_) => {
+                    println!(
+                        "Failed to parse '{}', aborting.",
+                        pending_patch.info.file_name
+                    );
+                    break;
+                }
             }
         }
         println!("Patching finished!");
