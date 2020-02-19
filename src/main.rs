@@ -138,6 +138,13 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
         let patch_url = Url::parse(config.network.patch_url.as_str()).unwrap();
         let patch_list_url = patch_url.join(PATCH_LIST_FILE_NAME).unwrap();
         let resp = reqwest::blocking::get(patch_list_url).unwrap();
+        if !resp.status().is_success() {
+            println!(
+                "Patch list '{}' not found on the remote server, aborting.",
+                PATCH_LIST_FILE_NAME
+            );
+            return;
+        }
         let patch_index_content = match resp.text() {
             Ok(v) => v,
             Err(_) => return,
@@ -184,29 +191,17 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
         println!("Done");
         // Proceed with actual patching
         println!("Applying patches...");
-        for mut pending_patch in pending_patch_queue {
+        for pending_patch in pending_patch_queue {
             println!("Processing {}", pending_patch.info.file_name);
-            let mut buf: Vec<u8> = vec![];
-            let _bytes_read = match pending_patch.local_file.read_to_end(&mut buf) {
+            let mut archive = match ThorArchive::new(pending_patch.local_file) {
                 Ok(v) => v,
                 Err(_) => {
                     println!("Cannot read '{}', aborting.", pending_patch.info.file_name);
                     break;
                 }
             };
-            let res_thor = parse_thor_patch(buf.as_mut_slice());
-            match res_thor {
-                Ok((_output, patch)) => {
-                    println!("{:?}", patch);
-                }
-                Err(_) => {
-                    println!(
-                        "Failed to parse '{}', aborting.",
-                        pending_patch.info.file_name
-                    );
-                    break;
-                }
-            }
+            println!("{:?}", archive);
+            let _data_integrity = archive.read_file_content("data.integrity").unwrap();
         }
         println!("Patching finished!");
     })
