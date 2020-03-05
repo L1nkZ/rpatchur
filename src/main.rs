@@ -25,7 +25,8 @@ struct PatcherConfiguration {
     window: WindowConfiguration,
     play: PlayConfiguration,
     setup: SetupConfiguration,
-    network: NetworkConfiguration,
+    web: WebConfiguration,
+    client: ClientConfiguration,
 }
 
 #[derive(Deserialize, Clone)]
@@ -48,9 +49,14 @@ struct SetupConfiguration {
 }
 
 #[derive(Deserialize, Clone)]
-struct NetworkConfiguration {
+struct WebConfiguration {
     index_url: String,
     patch_url: String,
+}
+
+#[derive(Deserialize, Clone)]
+struct ClientConfiguration {
+    default_grf_name: String,
 }
 
 #[derive(Debug)]
@@ -74,7 +80,7 @@ fn main() {
     let patching_thread = spawn_patching_thread(config.clone());
     web_view::builder()
         .title("RPatchur")
-        .content(Content::Url(config.network.index_url.clone()))
+        .content(Content::Url(config.web.index_url.clone()))
         .size(config.window.width, config.window.height)
         .resizable(config.window.resizable)
         .user_data(config)
@@ -135,7 +141,7 @@ fn handle_reset_cache(_webview: &mut WebView<PatcherConfiguration>) {
 fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()> {
     thread::spawn(move || {
         println!("Patching thread started.");
-        let patch_url = Url::parse(config.network.patch_url.as_str()).unwrap();
+        let patch_url = Url::parse(config.web.patch_url.as_str()).unwrap();
         let patch_list_url = patch_url.join(PATCH_LIST_FILE_NAME).unwrap();
         let resp = reqwest::blocking::get(patch_list_url).unwrap();
         if !resp.status().is_success() {
@@ -193,15 +199,23 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
         println!("Applying patches...");
         for pending_patch in pending_patch_queue {
             println!("Processing {}", pending_patch.info.file_name);
-            let mut archive = match ThorArchive::new(pending_patch.local_file) {
+            let archive = match ThorArchive::new(pending_patch.local_file) {
                 Ok(v) => v,
                 Err(_) => {
                     println!("Cannot read '{}', aborting.", pending_patch.info.file_name);
                     break;
                 }
             };
-            println!("{:?}", archive);
-            let _data_integrity = archive.read_file_content("data.integrity").unwrap();
+            let patch_target_grf_name = archive.get_target_grf_name();
+            if patch_target_grf_name.len() == 0 {
+                println!("Target GRF: {:?}", config.client.default_grf_name);
+            } else {
+                println!("Target GRF: {:?}", patch_target_grf_name);
+            }
+            println!("Entries:");
+            for entry in archive.get_entries() {
+                println!("{:?}", entry);
+            }
         }
         println!("Patching finished!");
     })

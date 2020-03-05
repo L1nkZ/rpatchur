@@ -48,6 +48,10 @@ impl<R: Read + Seek> ThorArchive<R> {
         })
     }
 
+    pub fn get_target_grf_name(&self) -> String {
+        self.patch.header.target_grf_name.clone()
+    }
+
     pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Option<Vec<u8>> {
         let file_entry = self.get_file_entry(file_path)?.clone();
         // Decompress the table with zlib
@@ -72,6 +76,10 @@ impl<R: Read + Seek> ThorArchive<R> {
 
     pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&ThorEntry> {
         self.patch.entries.get(file_path.as_ref())
+    }
+
+    pub fn get_entries(&self) -> impl Iterator<Item = &'_ ThorEntry> {
+        self.patch.entries.values()
     }
 }
 
