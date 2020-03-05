@@ -1,63 +1,22 @@
-extern crate serde;
-extern crate serde_json;
 extern crate tempfile;
 extern crate url;
 extern crate web_view;
 
+mod config;
 mod thor;
 
 use std::fs::File;
 use std::io::prelude::*;
-use std::io::BufReader;
 use std::io::SeekFrom;
 use std::process::Command;
 use std::thread;
 
-use serde::Deserialize;
+use config::*;
 use thor::*;
 use url::Url;
 use web_view::*;
 
 const PATCH_LIST_FILE_NAME: &str = "plist.txt";
-
-#[derive(Deserialize, Clone)]
-struct PatcherConfiguration {
-    window: WindowConfiguration,
-    play: PlayConfiguration,
-    setup: SetupConfiguration,
-    web: WebConfiguration,
-    client: ClientConfiguration,
-}
-
-#[derive(Deserialize, Clone)]
-struct WindowConfiguration {
-    width: i32,
-    height: i32,
-    resizable: bool,
-}
-
-#[derive(Deserialize, Clone)]
-struct PlayConfiguration {
-    path: String,
-    argument: String,
-}
-
-#[derive(Deserialize, Clone)]
-struct SetupConfiguration {
-    path: String,
-    argument: String,
-}
-
-#[derive(Deserialize, Clone)]
-struct WebConfiguration {
-    index_url: String,
-    patch_url: String,
-}
-
-#[derive(Deserialize, Clone)]
-struct ClientConfiguration {
-    default_grf_name: String,
-}
 
 #[derive(Debug)]
 struct PatchInfo {
@@ -219,25 +178,6 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
         }
         println!("Patching finished!");
     })
-}
-
-fn parse_configuration(config_file_path: &str) -> Option<PatcherConfiguration> {
-    let config_file = match File::open(config_file_path) {
-        Ok(t) => t,
-        _ => {
-            println!("Cannot open configuration file.");
-            return None;
-        }
-    };
-    let config_reader = BufReader::new(config_file);
-    let config: PatcherConfiguration = match serde_json::from_reader(config_reader) {
-        Ok(t) => t,
-        _ => {
-            println!("Invalid JSON configuration.");
-            return None;
-        }
-    };
-    Some(config)
 }
 
 fn patch_list_from_string(content: &str) -> Vec<PatchInfo> {
