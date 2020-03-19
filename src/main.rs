@@ -3,6 +3,7 @@ extern crate url;
 extern crate web_view;
 
 mod config;
+mod grf;
 mod thor;
 
 use std::fs::File;
@@ -12,6 +13,7 @@ use std::process::Command;
 use std::thread;
 
 use config::*;
+use grf::*;
 use thor::*;
 use url::Url;
 use web_view::*;

@@ -31,6 +31,7 @@ impl<R: Read + Seek> ThorArchive<R> {
     /// Create a new archive with the underlying object as the reader.
     pub fn new(mut obj: R) -> io::Result<ThorArchive<R>> {
         let mut buf: Vec<u8> = vec![];
+        // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
         let _bytes_read = obj.read_to_end(&mut buf)?;
         let (_, thor_patch) = match parse_thor_patch(buf.as_mut_slice()) {
             IResult::Ok(v) => v,
