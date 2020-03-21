@@ -33,7 +33,7 @@ impl<R: Read + Seek> ThorArchive<R> {
         let mut buf: Vec<u8> = vec![];
         // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
         let _bytes_read = obj.read_to_end(&mut buf)?;
-        let (_, thor_patch) = match parse_thor_patch(buf.as_mut_slice()) {
+        let (_, thor_patch) = match parse_thor_patch(buf.as_slice()) {
             IResult::Ok(v) => v,
             _ => {
                 return Err(io::Error::new(
@@ -300,7 +300,7 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorPatch> {
             };
             // Parse multiple entries
             let (_output, entries) =
-                match parse_multiple_files_entries(decompressed_table.as_mut_slice()) {
+                match parse_multiple_files_entries(decompressed_table.as_slice()) {
                     Ok(v) => v,
                     Err(_) => return Err(Err::Failure((input, ErrorKind::Many1))),
                 };
