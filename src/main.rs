@@ -86,7 +86,7 @@ fn handle_setup(webview: &mut WebView<PatcherConfiguration>) {
 
 /// Exits the patcher cleanly
 fn handle_exit(webview: &mut WebView<PatcherConfiguration>) {
-    webview.terminate();
+    webview.exit();
 }
 
 /// Cancels the update process

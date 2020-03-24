@@ -199,12 +199,12 @@ fn string_from_win_1252(v: &[u8]) -> Result<String, Cow<'static, str>> {
 
 macro_rules! take_string_ansi (
     ( $i:expr, $size:expr ) => (
-       {
-         let input: &[u8] = $i;
-         map_res!(input, take!($size), string_from_win_1252)
-       }
+        {
+            let input: &[u8] = $i;
+            map_res!(input, take!($size), string_from_win_1252)
+        }
      );
-   );
+);
 
 named!(parse_single_file_entry<&[u8], ThorEntry>,
     do_parse!(

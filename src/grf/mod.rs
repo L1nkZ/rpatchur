@@ -2,6 +2,8 @@ extern crate encoding;
 extern crate flate2;
 extern crate nom;
 
+mod crypto;
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fs::File;
@@ -10,9 +12,11 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::str;
 
+use crypto::decrypt_file_name;
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
 use flate2::read::ZlibDecoder;
+use nom::error::ErrorKind;
 use nom::number::complete::{le_i32, le_u32, le_u8};
 use nom::IResult;
 use nom::*;
@@ -36,7 +40,7 @@ pub fn open_grf_container(grf_path: &Path) -> io::Result<GrfContainer> {
 
     match grf_header.version_major {
         2 => {
-            let (parser_output, grf_table_info) = match parse_grf_table_200(
+            let (parser_output, grf_table_info) = match parse_grf_table_info_200(
                 &parser_output[grf_header.file_table_offset as usize..],
             ) {
                 IResult::Ok(v) => v,
@@ -68,30 +72,63 @@ pub fn open_grf_container(grf_path: &Path) -> io::Result<GrfContainer> {
                 }
             };
             // Parse entries
-            let (_output, entries) =
-                match parse_grf_file_entries(decompressed_table.as_slice(), grf_header.files_count)
-                {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Failed to parse file table.",
-                        ))
-                    }
-                };
+            let (_output, entries) = match parse_grf_file_entries_200(
+                decompressed_table.as_slice(),
+                grf_header.files_count,
+            ) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Failed to parse file table.",
+                    ))
+                }
+            };
             Ok(GrfContainer {
                 header: grf_header,
                 table_info: GrfTableInfo::Compressed(grf_table_info),
                 entries: entries,
             })
         }
-        1 => Ok(GrfContainer {
-            header: grf_header,
-            table_info: GrfTableInfo::Uncompressed(GrfTableInfo1 {
-                table_size: parser_output.len(),
-            }),
-            entries: HashMap::new(),
-        }),
+        1 => {
+            // Only versions 1.1, 1.2 and 1.3 are supported
+            if grf_header.version_minor < 1 || grf_header.version_minor > 3 {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Unsupported archive version.",
+                ));
+            }
+            let table_size = parser_output.len();
+            if table_size == 0 {
+                return Ok(GrfContainer {
+                    header: grf_header,
+                    table_info: GrfTableInfo::Uncompressed(GrfTableInfo1 {
+                        table_size: table_size,
+                    }),
+                    entries: HashMap::new(),
+                });
+            }
+            // Parse entries
+            let (_parser_output, entries) = match parse_grf_file_entries_101(
+                &parser_output[grf_header.file_table_offset as usize..],
+                grf_header.files_count,
+            ) {
+                Ok(v) => v,
+                Err(_) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Failed to parse file table.",
+                    ))
+                }
+            };
+            Ok(GrfContainer {
+                header: grf_header,
+                table_info: GrfTableInfo::Uncompressed(GrfTableInfo1 {
+                    table_size: table_size,
+                }),
+                entries: entries,
+            })
+        }
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -139,7 +176,7 @@ pub struct GrfTableInfo2 {
 pub struct GrfFileEntry {
     pub relative_path: String,
     pub size_compressed: usize,
-    pub data_size: usize,
+    pub size_compressed_aligned: usize,
     pub size: usize,
     pub entry_type: u8,
     pub offset: u32,
@@ -164,7 +201,7 @@ named!(parse_grf_header<&[u8], GrfHeader>,
     )
 ));
 
-named!(parse_grf_table_200<&[u8], GrfTableInfo2>,
+named!(parse_grf_table_info_200<&[u8], GrfTableInfo2>,
     do_parse!(
         table_size_compressed: le_u32
             >> table_size: le_u32
@@ -183,19 +220,35 @@ fn string_from_win_1252(v: &[u8]) -> Result<String, Cow<'static, str>> {
     decoder.decode(v, DecoderTrap::Strict)
 }
 
-named!(parse_grf_file_entry<&[u8], GrfFileEntry>,
+macro_rules! take_obfuscated_name_101 (
+    ( $i:expr, $size:expr ) => (
+        {
+            let input: &[u8] = $i;
+            let (parser_output, file_name_bytes) = map_res!(input, take!($size), decrypt_file_name)?;
+            match string_from_win_1252(file_name_bytes.as_slice()) {
+                Ok(v) => Ok((parser_output , v)),
+                Err(_) => Err(nom::Err::Failure((parser_output, ErrorKind::AlphaNumeric))),
+            }
+        }
+     );
+);
+
+// Parses file table entries for GRF 1.1, 1.2 and 1.3
+named!(parse_grf_file_entry_101<&[u8], GrfFileEntry>,
     do_parse!(
-        relative_path: map_res!(take_while!(|ch: u8| ch != 0), string_from_win_1252)
-            >> take!(1)
-            >> size_compressed: le_u32
-            >> data_size: le_u32
+        path_size_padded: le_u32
+            >> take!(2) // Null chars
+            >> relative_path: take_obfuscated_name_101!(path_size_padded - 6)
+            >> take!(4) // Null chars
+            >> size_tot_enc: le_u32
+            >> size_compressed_aligned_enc: le_u32
             >> size: le_u32
             >> entry_type: le_u8
             >> offset: le_u32
             >> (GrfFileEntry {
-                relative_path: relative_path.to_string(),
-                size_compressed: size_compressed as usize,
-                data_size: data_size as usize,
+                relative_path: relative_path,
+                size_compressed: (size_tot_enc - size - 0x02CB) as usize,
+                size_compressed_aligned: (size_compressed_aligned_enc - 0x92CB) as usize,
                 size: size as usize,
                 entry_type: entry_type,
                 offset: offset
@@ -204,8 +257,37 @@ named!(parse_grf_file_entry<&[u8], GrfFileEntry>,
     )
 );
 
-named_args!(parse_grf_file_entries(files_count: usize)<&[u8], HashMap<String, GrfFileEntry>>,
-fold_many_m_n!(0, files_count, parse_grf_file_entry, HashMap::new(), |mut acc: HashMap<_, _>, item| {
+// Parses file table entries for GRF 2.0
+named!(parse_grf_file_entry_200<&[u8], GrfFileEntry>,
+    do_parse!(
+        relative_path: map_res!(take_while!(|ch: u8| ch != 0), string_from_win_1252)
+            >> take!(1) // Null char terminator
+            >> size_compressed: le_u32
+            >> size_compressed_aligned: le_u32
+            >> size: le_u32
+            >> entry_type: le_u8
+            >> offset: le_u32
+            >> (GrfFileEntry {
+                relative_path: relative_path.to_string(),
+                size_compressed: size_compressed as usize,
+                size_compressed_aligned: size_compressed_aligned as usize,
+                size: size as usize,
+                entry_type: entry_type,
+                offset: offset
+            }
+        )
+    )
+);
+
+named_args!(parse_grf_file_entries_101(files_count: usize)<&[u8], HashMap<String, GrfFileEntry>>,
+fold_many_m_n!(1, files_count - 1, parse_grf_file_entry_101, HashMap::new(), |mut acc: HashMap<_, _>, item| {
+        acc.insert(item.relative_path.clone(), item);
+        acc
+    })
+);
+
+named_args!(parse_grf_file_entries_200(files_count: usize)<&[u8], HashMap<String, GrfFileEntry>>,
+fold_many_m_n!(1, files_count, parse_grf_file_entry_200, HashMap::new(), |mut acc: HashMap<_, _>, item| {
         acc.insert(item.relative_path.clone(), item);
         acc
     })
@@ -238,6 +320,13 @@ mod tests {
         .iter()
         .cloned()
         .collect();
+        let check_small_grf_entries = |entries: HashMap<String, GrfFileEntry>| {
+            for file_entry in entries.values() {
+                let file_path: &str = &file_entry.relative_path[..];
+                assert!(expected_sizes.contains_key(file_path));
+                assert_eq!(file_entry.size, expected_sizes[file_path]);
+            }
+        };
         {
             let grf_path = grf_dir_path.join("200-empty.grf");
             let grf = open_grf_container(&grf_path).unwrap();
@@ -252,11 +341,7 @@ mod tests {
             assert_eq!(grf.header.files_count, 8);
             assert_eq!(grf.header.version_major, 2);
             assert_eq!(grf.header.version_minor, 0);
-            for file_entry in grf.entries.values() {
-                let file_path: &str = &file_entry.relative_path[..];
-                assert!(expected_sizes.contains_key(file_path));
-                assert_eq!(file_entry.size, expected_sizes[file_path]);
-            }
+            check_small_grf_entries(grf.entries);
         }
 
         {
@@ -273,6 +358,7 @@ mod tests {
             assert_eq!(grf.header.files_count, 8);
             assert_eq!(grf.header.version_major, 1);
             assert_eq!(grf.header.version_minor, 3);
+            check_small_grf_entries(grf.entries);
         }
 
         {
@@ -289,6 +375,7 @@ mod tests {
             assert_eq!(grf.header.files_count, 8);
             assert_eq!(grf.header.version_major, 1);
             assert_eq!(grf.header.version_minor, 2);
+            check_small_grf_entries(grf.entries);
         }
     }
 }
