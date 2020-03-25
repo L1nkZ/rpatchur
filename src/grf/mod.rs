@@ -5,10 +5,12 @@ extern crate nom;
 mod crypto;
 
 use std::borrow::Cow;
+use std::boxed::Box;
 use std::collections::HashMap;
 use std::fs::File;
+use std::hash::Hash;
 use std::io;
-use std::io::prelude::*;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::str;
 
@@ -23,118 +25,181 @@ use nom::*;
 
 const HEADER_MAGIC: &str = "Master of Magic\0";
 
-pub fn open_grf_container(grf_path: &Path) -> io::Result<GrfContainer> {
-    let mut file = File::open(grf_path)?;
-    // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
-    let mut buf = vec![];
-    let _bytes_read = file.read_to_end(&mut buf)?;
-    let (parser_output, grf_header) = match parse_grf_header(buf.as_slice()) {
-        IResult::Ok(v) => v,
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Failed to parse archive.",
-            ))
-        }
-    };
+#[derive(Debug)]
+pub struct GrfArchive {
+    obj: Box<File>,
+    container: GrfContainer,
+}
 
-    match grf_header.version_major {
-        2 => {
-            let (parser_output, grf_table_info) = match parse_grf_table_info_200(
-                &parser_output[grf_header.file_table_offset as usize..],
-            ) {
-                IResult::Ok(v) => v,
-                _ => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "Failed to parse archive.",
-                    ))
-                }
-            };
-            if grf_table_info.table_size_compressed == 0 || grf_table_info.table_size == 0 {
-                return Ok(GrfContainer {
-                    header: grf_header,
-                    table_info: GrfTableInfo::Compressed(grf_table_info),
-                    entries: HashMap::new(),
-                });
+impl GrfArchive {
+    /// Create a new archive with the underlying object as the reader.
+    pub fn new(grf_path: &Path) -> io::Result<GrfArchive> {
+        let mut file = File::open(grf_path)?;
+        // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
+        let mut buf = vec![];
+        let _bytes_read = file.read_to_end(&mut buf)?;
+        let (parser_output, grf_header) = match parse_grf_header(buf.as_slice()) {
+            IResult::Ok(v) => v,
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Failed to parse archive.",
+                ))
             }
-            // Decompress the table with zlib
-            let mut decoder =
-                ZlibDecoder::new(&parser_output[..grf_table_info.table_size_compressed]);
-            let mut decompressed_table = vec![];
-            let _decompressed_size = match decoder.read_to_end(&mut decompressed_table) {
-                Ok(v) => v,
-                Err(_) => {
+        };
+
+        match grf_header.version_major {
+            2 => {
+                let (parser_output, grf_table_info) = match parse_grf_table_info_200(
+                    &parser_output[grf_header.file_table_offset as usize..],
+                ) {
+                    IResult::Ok(v) => v,
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Failed to parse archive.",
+                        ))
+                    }
+                };
+                if grf_table_info.table_size_compressed == 0 || grf_table_info.table_size == 0 {
+                    return Ok(GrfArchive {
+                        obj: Box::new(file),
+                        container: GrfContainer {
+                            header: grf_header,
+                            table_info: GrfTableInfo::Compressed(grf_table_info),
+                            entries: HashMap::new(),
+                        },
+                    });
+                }
+                // Decompress the table with zlib
+                let mut decoder =
+                    ZlibDecoder::new(&parser_output[..grf_table_info.table_size_compressed]);
+                let mut decompressed_table = vec![];
+                let _decompressed_size = match decoder.read_to_end(&mut decompressed_table) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Failed to decompress file table.",
+                        ))
+                    }
+                };
+                // Parse entries
+                let (_output, entries) = match parse_grf_file_entries_200(
+                    decompressed_table.as_slice(),
+                    grf_header.file_count,
+                ) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Failed to parse file table.",
+                        ))
+                    }
+                };
+                Ok(GrfArchive {
+                    obj: Box::new(file),
+                    container: GrfContainer {
+                        header: grf_header,
+                        table_info: GrfTableInfo::Compressed(grf_table_info),
+                        entries: entries,
+                    },
+                })
+            }
+            1 => {
+                // Only versions 1.1, 1.2 and 1.3 are supported
+                if grf_header.version_minor < 1 || grf_header.version_minor > 3 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        "Failed to decompress file table.",
-                    ))
+                        "Unsupported archive version.",
+                    ));
                 }
-            };
-            // Parse entries
-            let (_output, entries) = match parse_grf_file_entries_200(
-                decompressed_table.as_slice(),
-                grf_header.files_count,
-            ) {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "Failed to parse file table.",
-                    ))
+                let table_size = parser_output.len();
+                if table_size == 0 {
+                    return Ok(GrfArchive {
+                        obj: Box::new(file),
+                        container: GrfContainer {
+                            header: grf_header,
+                            table_info: GrfTableInfo::Uncompressed(GrfTableInfo1 {
+                                table_size: table_size,
+                            }),
+                            entries: HashMap::new(),
+                        },
+                    });
                 }
-            };
-            Ok(GrfContainer {
-                header: grf_header,
-                table_info: GrfTableInfo::Compressed(grf_table_info),
-                entries: entries,
-            })
-        }
-        1 => {
-            // Only versions 1.1, 1.2 and 1.3 are supported
-            if grf_header.version_minor < 1 || grf_header.version_minor > 3 {
+                // Parse entries
+                let (_parser_output, entries) = match parse_grf_file_entries_101(
+                    &parser_output[grf_header.file_table_offset as usize..],
+                    grf_header.file_count,
+                ) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Failed to parse file table.",
+                        ))
+                    }
+                };
+                Ok(GrfArchive {
+                    obj: Box::new(file),
+                    container: GrfContainer {
+                        header: grf_header,
+                        table_info: GrfTableInfo::Uncompressed(GrfTableInfo1 {
+                            table_size: table_size,
+                        }),
+                        entries: entries,
+                    },
+                })
+            }
+            _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
                     "Unsupported archive version.",
-                ));
+                ))
             }
-            let table_size = parser_output.len();
-            if table_size == 0 {
-                return Ok(GrfContainer {
-                    header: grf_header,
-                    table_info: GrfTableInfo::Uncompressed(GrfTableInfo1 {
-                        table_size: table_size,
-                    }),
-                    entries: HashMap::new(),
-                });
-            }
-            // Parse entries
-            let (_parser_output, entries) = match parse_grf_file_entries_101(
-                &parser_output[grf_header.file_table_offset as usize..],
-                grf_header.files_count,
-            ) {
-                Ok(v) => v,
-                Err(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "Failed to parse file table.",
-                    ))
-                }
-            };
-            Ok(GrfContainer {
-                header: grf_header,
-                table_info: GrfTableInfo::Uncompressed(GrfTableInfo1 {
-                    table_size: table_size,
-                }),
-                entries: entries,
-            })
         }
-        _ => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Unsupported archive version.",
-            ))
+    }
+
+    pub fn file_count(&self) -> usize {
+        self.container.header.file_count
+    }
+
+    pub fn version_major(&self) -> u32 {
+        self.container.header.version_major
+    }
+
+    pub fn version_minor(&self) -> u32 {
+        self.container.header.version_minor
+    }
+
+    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Option<Vec<u8>> {
+        let file_entry = self.get_file_entry(file_path)?.clone();
+        // Decompress the table with zlib
+        match self.obj.seek(SeekFrom::Start(file_entry.offset)) {
+            Ok(_) => (),
+            Err(_) => return None,
         }
+        let mut buf: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
+        buf.resize(file_entry.size_compressed, 0);
+        match self.obj.read(buf.as_mut_slice()) {
+            Ok(_) => (),
+            Err(_) => return None,
+        }
+        let mut decoder = ZlibDecoder::new(&buf[..]);
+        let mut decompressed_content = Vec::new();
+        let _decompressed_size = match decoder.read_to_end(&mut decompressed_content) {
+            Ok(v) => v,
+            Err(_) => return None,
+        };
+        Some(decompressed_content)
+    }
+
+    pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&GrfFileEntry> {
+        self.container.entries.get(file_path.as_ref())
+    }
+
+    pub fn get_entries(&self) -> impl Iterator<Item = &'_ GrfFileEntry> {
+        self.container.entries.values()
     }
 }
 
@@ -148,9 +213,9 @@ pub struct GrfContainer {
 #[derive(Debug, PartialEq, Eq)]
 pub struct GrfHeader {
     pub key: String,
-    pub file_table_offset: u32,
+    pub file_table_offset: u64,
     pub seed: i32,
-    pub files_count: usize,
+    pub file_count: usize,
     pub version_major: u32,
     pub version_minor: u32,
 }
@@ -179,7 +244,7 @@ pub struct GrfFileEntry {
     pub size_compressed_aligned: usize,
     pub size: usize,
     pub entry_type: u8,
-    pub offset: u32,
+    pub offset: u64,
 }
 
 named!(parse_grf_header<&[u8], GrfHeader>,
@@ -192,9 +257,9 @@ named!(parse_grf_header<&[u8], GrfHeader>,
             >> version: le_u32
             >> (GrfHeader {
                 key: key.to_string(),
-                file_table_offset: file_table_offset,
+                file_table_offset: file_table_offset as u64,
                 seed: seed,
-                files_count: (v_files_count - seed - 7) as usize,
+                file_count: (v_files_count - seed - 7) as usize,
                 version_major: (version >> 8) & 0xFF,
                 version_minor: version & 0xFF
             }
@@ -251,7 +316,7 @@ named!(parse_grf_file_entry_101<&[u8], GrfFileEntry>,
                 size_compressed_aligned: (size_compressed_aligned_enc - 0x92CB) as usize,
                 size: size as usize,
                 entry_type: entry_type,
-                offset: offset
+                offset: offset as u64
             }
         )
     )
@@ -273,7 +338,7 @@ named!(parse_grf_file_entry_200<&[u8], GrfFileEntry>,
                 size_compressed_aligned: size_compressed_aligned as usize,
                 size: size as usize,
                 entry_type: entry_type,
-                offset: offset
+                offset: offset as u64
             }
         )
     )
@@ -320,8 +385,8 @@ mod tests {
         .iter()
         .cloned()
         .collect();
-        let check_small_grf_entries = |entries: HashMap<String, GrfFileEntry>| {
-            for file_entry in entries.values() {
+        let check_small_grf_entries = |grf: GrfArchive| {
+            for file_entry in grf.get_entries() {
                 let file_path: &str = &file_entry.relative_path[..];
                 assert!(expected_sizes.contains_key(file_path));
                 assert_eq!(file_entry.size, expected_sizes[file_path]);
@@ -329,53 +394,53 @@ mod tests {
         };
         {
             let grf_path = grf_dir_path.join("200-empty.grf");
-            let grf = open_grf_container(&grf_path).unwrap();
-            assert_eq!(grf.header.files_count, 0);
-            assert_eq!(grf.header.version_major, 2);
-            assert_eq!(grf.header.version_minor, 0);
+            let grf = GrfArchive::new(&grf_path).unwrap();
+            assert_eq!(grf.file_count(), 0);
+            assert_eq!(grf.version_major(), 2);
+            assert_eq!(grf.version_minor(), 0);
         }
 
         {
             let grf_path = grf_dir_path.join("200-small.grf");
-            let grf = open_grf_container(&grf_path).unwrap();
-            assert_eq!(grf.header.files_count, 8);
-            assert_eq!(grf.header.version_major, 2);
-            assert_eq!(grf.header.version_minor, 0);
-            check_small_grf_entries(grf.entries);
+            let grf = GrfArchive::new(&grf_path).unwrap();
+            assert_eq!(grf.file_count(), 8);
+            assert_eq!(grf.version_major(), 2);
+            assert_eq!(grf.version_minor(), 0);
+            check_small_grf_entries(grf);
         }
 
         {
             let grf_path = grf_dir_path.join("103-empty.grf");
-            let grf = open_grf_container(&grf_path).unwrap();
-            assert_eq!(grf.header.files_count, 0);
-            assert_eq!(grf.header.version_major, 1);
-            assert_eq!(grf.header.version_minor, 3);
+            let grf = GrfArchive::new(&grf_path).unwrap();
+            assert_eq!(grf.file_count(), 0);
+            assert_eq!(grf.version_major(), 1);
+            assert_eq!(grf.version_minor(), 3);
         }
 
         {
             let grf_path = grf_dir_path.join("103-small.grf");
-            let grf = open_grf_container(&grf_path).unwrap();
-            assert_eq!(grf.header.files_count, 8);
-            assert_eq!(grf.header.version_major, 1);
-            assert_eq!(grf.header.version_minor, 3);
-            check_small_grf_entries(grf.entries);
+            let grf = GrfArchive::new(&grf_path).unwrap();
+            assert_eq!(grf.file_count(), 8);
+            assert_eq!(grf.version_major(), 1);
+            assert_eq!(grf.version_minor(), 3);
+            check_small_grf_entries(grf);
         }
 
         {
             let grf_path = grf_dir_path.join("102-empty.grf");
-            let grf = open_grf_container(&grf_path).unwrap();
-            assert_eq!(grf.header.files_count, 0);
-            assert_eq!(grf.header.version_major, 1);
-            assert_eq!(grf.header.version_minor, 2);
+            let grf = GrfArchive::new(&grf_path).unwrap();
+            assert_eq!(grf.file_count(), 0);
+            assert_eq!(grf.version_major(), 1);
+            assert_eq!(grf.version_minor(), 2);
         }
 
         {
             let grf_path = grf_dir_path.join("102-small.grf");
-            let grf = open_grf_container(&grf_path).unwrap();
-            assert_eq!(grf.header.files_count, 8);
-            assert_eq!(grf.header.version_major, 1);
-            assert_eq!(grf.header.version_minor, 2);
-            check_small_grf_entries(grf.entries);
+            let grf = GrfArchive::new(&grf_path).unwrap();
+            assert_eq!(grf.file_count(), 8);
+            assert_eq!(grf.version_major(), 1);
+            assert_eq!(grf.version_minor(), 2);
+            check_small_grf_entries(grf);
         }
     }
 }
