@@ -7,6 +7,7 @@ mod crypto;
 use std::borrow::Cow;
 use std::boxed::Box;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::fs::File;
 use std::hash::Hash;
 use std::io;
@@ -14,7 +15,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::str;
 
-use crypto::decrypt_file_name;
+use crypto::{decrypt_file_content, decrypt_file_name};
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
 use flate2::read::ZlibDecoder;
@@ -24,6 +25,7 @@ use nom::IResult;
 use nom::*;
 
 const HEADER_MAGIC: &str = "Master of Magic\0";
+const GRF_HEADER_SIZE: usize = 0xF + 0x1F;
 
 #[derive(Debug)]
 pub struct GrfArchive {
@@ -43,7 +45,7 @@ impl GrfArchive {
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Failed to parse archive.",
+                    "Failed to parse archive",
                 ))
             }
         };
@@ -57,7 +59,7 @@ impl GrfArchive {
                     _ => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "Failed to parse archive.",
+                            "Failed to parse archive",
                         ))
                     }
                 };
@@ -80,7 +82,7 @@ impl GrfArchive {
                     Err(_) => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "Failed to decompress file table.",
+                            "Failed to decompress file table",
                         ))
                     }
                 };
@@ -93,7 +95,7 @@ impl GrfArchive {
                     Err(_) => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "Failed to parse file table.",
+                            "Failed to parse file table",
                         ))
                     }
                 };
@@ -111,7 +113,7 @@ impl GrfArchive {
                 if grf_header.version_minor < 1 || grf_header.version_minor > 3 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        "Unsupported archive version.",
+                        "Unsupported archive version",
                     ));
                 }
                 let table_size = parser_output.len();
@@ -136,7 +138,7 @@ impl GrfArchive {
                     Err(_) => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "Failed to parse file table.",
+                            "Failed to parse file table",
                         ))
                     }
                 };
@@ -154,7 +156,7 @@ impl GrfArchive {
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Unsupported archive version.",
+                    "Unsupported archive version",
                 ))
             }
         }
@@ -172,26 +174,32 @@ impl GrfArchive {
         self.container.header.version_minor
     }
 
-    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Option<Vec<u8>> {
-        let file_entry = self.get_file_entry(file_path)?.clone();
-        // Decompress the table with zlib
-        match self.obj.seek(SeekFrom::Start(file_entry.offset)) {
-            Ok(_) => (),
-            Err(_) => return None,
-        }
-        let mut buf: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
-        buf.resize(file_entry.size_compressed, 0);
-        match self.obj.read(buf.as_mut_slice()) {
-            Ok(_) => (),
-            Err(_) => return None,
-        }
-        let mut decoder = ZlibDecoder::new(&buf[..]);
-        let mut decompressed_content = Vec::new();
-        let _decompressed_size = match decoder.read_to_end(&mut decompressed_content) {
-            Ok(v) => v,
-            Err(_) => return None,
+    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> io::Result<Vec<u8>> {
+        let file_entry = match self.get_file_entry(file_path) {
+            Some(v) => v.clone(),
+            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
-        Some(decompressed_content)
+        self.obj.seek(SeekFrom::Start(file_entry.offset))?;
+        let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed_aligned);
+        content.resize(file_entry.size_compressed_aligned, 0);
+        self.obj.read_exact(content.as_mut_slice())?;
+        match file_entry.encryption {
+            GrfFileEncryption::Unencrypted => {}
+            GrfFileEncryption::Encrypted(cycle) => {
+                decrypt_file_content(&mut content, cycle);
+            }
+        }
+        // Decompress the content with zlib
+        let mut decoder = ZlibDecoder::new(content.as_slice());
+        let mut decompressed_content = Vec::new();
+        let decompressed_size = decoder.read_to_end(&mut decompressed_content)?;
+        if decompressed_size != file_entry.size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Decompressed content is not as expected",
+            ));
+        }
+        Ok(decompressed_content)
     }
 
     pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&GrfFileEntry> {
@@ -212,7 +220,7 @@ pub struct GrfContainer {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct GrfHeader {
-    pub key: String,
+    pub key: [u8; 14],
     pub file_table_offset: u64,
     pub seed: i32,
     pub file_count: usize,
@@ -245,18 +253,25 @@ pub struct GrfFileEntry {
     pub size: usize,
     pub entry_type: u8,
     pub offset: u64,
+    pub encryption: GrfFileEncryption,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GrfFileEncryption {
+    Unencrypted,
+    Encrypted(usize), // Contains the cycle as usize
 }
 
 named!(parse_grf_header<&[u8], GrfHeader>,
     do_parse!(
         tag!(HEADER_MAGIC)
-            >> key: take_str!(14)
+            >> key: take!(14)
             >> file_table_offset: le_u32
             >> seed: le_i32
             >> v_files_count: le_i32
             >> version: le_u32
             >> (GrfHeader {
-                key: key.to_string(),
+                key: key.try_into().unwrap(),
                 file_table_offset: file_table_offset as u64,
                 seed: seed,
                 file_count: (v_files_count - seed - 7) as usize,
@@ -298,6 +313,34 @@ macro_rules! take_obfuscated_name_101 (
      );
 );
 
+fn determine_file_encryption_101(file_name: &String, size_compressed: usize) -> GrfFileEncryption {
+    const SPECIAL_EXTENSIONS: [&str; 4] = [".gnd", ".gat", ".act", ".str"];
+    let file_name_len = file_name.len();
+    if file_name_len < 4 {
+        return GrfFileEncryption::Encrypted(0);
+    }
+    let file_extension = &file_name[file_name_len - 4..];
+    match SPECIAL_EXTENSIONS.iter().position(|&r| r == file_extension) {
+        Some(_) => GrfFileEncryption::Encrypted(0),
+        None => GrfFileEncryption::Encrypted(digit_count(size_compressed)),
+    }
+}
+
+/// Counts digits naively
+fn digit_count(n: usize) -> usize {
+    let mut result = 1;
+    let mut acc = 10;
+    loop {
+        if n < acc {
+            break;
+        }
+        acc *= 10;
+        result += 1;
+    }
+
+    result
+}
+
 // Parses file table entries for GRF 1.1, 1.2 and 1.3
 named!(parse_grf_file_entry_101<&[u8], GrfFileEntry>,
     do_parse!(
@@ -311,12 +354,13 @@ named!(parse_grf_file_entry_101<&[u8], GrfFileEntry>,
             >> entry_type: le_u8
             >> offset: le_u32
             >> (GrfFileEntry {
-                relative_path: relative_path,
                 size_compressed: (size_tot_enc - size - 0x02CB) as usize,
                 size_compressed_aligned: (size_compressed_aligned_enc - 0x92CB) as usize,
                 size: size as usize,
                 entry_type: entry_type,
-                offset: offset as u64
+                offset: GRF_HEADER_SIZE as u64 + offset as u64,
+                encryption: determine_file_encryption_101(&relative_path, (size_tot_enc - size - 0x02CB) as usize),
+                relative_path: relative_path,
             }
         )
     )
@@ -338,7 +382,8 @@ named!(parse_grf_file_entry_200<&[u8], GrfFileEntry>,
                 size_compressed_aligned: size_compressed_aligned as usize,
                 size: size as usize,
                 entry_type: entry_type,
-                offset: offset as u64
+                offset: GRF_HEADER_SIZE as u64 + offset as u64,
+                encryption: GrfFileEncryption::Unencrypted,
             }
         )
     )
@@ -385,11 +430,16 @@ mod tests {
         .iter()
         .cloned()
         .collect();
-        let check_small_grf_entries = |grf: GrfArchive| {
-            for file_entry in grf.get_entries() {
+        let check_small_grf_entries = |grf: &mut GrfArchive| {
+            let file_entries: Vec<GrfFileEntry> = grf.get_entries().map(|e| e.clone()).collect();
+            for file_entry in file_entries {
                 let file_path: &str = &file_entry.relative_path[..];
                 assert!(expected_sizes.contains_key(file_path));
                 assert_eq!(file_entry.size, expected_sizes[file_path]);
+                assert_eq!(
+                    grf.read_file_content(file_path).unwrap().len(),
+                    expected_sizes[file_path]
+                );
             }
         };
         {
@@ -402,11 +452,11 @@ mod tests {
 
         {
             let grf_path = grf_dir_path.join("200-small.grf");
-            let grf = GrfArchive::new(&grf_path).unwrap();
+            let mut grf = GrfArchive::new(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 8);
             assert_eq!(grf.version_major(), 2);
             assert_eq!(grf.version_minor(), 0);
-            check_small_grf_entries(grf);
+            check_small_grf_entries(&mut grf);
         }
 
         {
@@ -419,11 +469,11 @@ mod tests {
 
         {
             let grf_path = grf_dir_path.join("103-small.grf");
-            let grf = GrfArchive::new(&grf_path).unwrap();
+            let mut grf = GrfArchive::new(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 8);
             assert_eq!(grf.version_major(), 1);
             assert_eq!(grf.version_minor(), 3);
-            check_small_grf_entries(grf);
+            check_small_grf_entries(&mut grf);
         }
 
         {
@@ -436,11 +486,21 @@ mod tests {
 
         {
             let grf_path = grf_dir_path.join("102-small.grf");
-            let grf = GrfArchive::new(&grf_path).unwrap();
+            let mut grf = GrfArchive::new(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 8);
             assert_eq!(grf.version_major(), 1);
             assert_eq!(grf.version_minor(), 2);
-            check_small_grf_entries(grf);
+            check_small_grf_entries(&mut grf);
         }
+    }
+
+    #[test]
+    fn test_digit_count() {
+        assert_eq!(1, digit_count(0));
+        assert_eq!(1, digit_count(8));
+        assert_eq!(2, digit_count(13));
+        assert_eq!(2, digit_count(99));
+        assert_eq!(3, digit_count(100));
+        assert_eq!(8, digit_count(87654321));
     }
 }

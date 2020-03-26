@@ -62,7 +62,7 @@ impl<R: Read + Seek> ThorArchive<R> {
         }
         let mut buf: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
         buf.resize(file_entry.size_compressed, 0);
-        match self.obj.read(buf.as_mut_slice()) {
+        match self.obj.read_exact(buf.as_mut_slice()) {
             Ok(_) => (),
             Err(_) => return None,
         }
