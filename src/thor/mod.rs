@@ -67,33 +67,33 @@ impl<R: Read + Seek> ThorArchive<R> {
         self.container.header.target_grf_name.clone()
     }
 
-    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Option<Vec<u8>> {
-        let file_entry = self.get_file_entry(file_path)?.clone();
-        // Decompress the table with zlib
-        match self.obj.seek(SeekFrom::Start(file_entry.offset)) {
-            Ok(_) => (),
-            Err(_) => return None,
-        }
-        let mut buf: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
-        buf.resize(file_entry.size_compressed, 0);
-        match self.obj.read_exact(buf.as_mut_slice()) {
-            Ok(_) => (),
-            Err(_) => return None,
-        }
-        let mut decoder = ZlibDecoder::new(&buf[..]);
-        let mut decompressed_content = Vec::new();
-        let _decompressed_size = match decoder.read_to_end(&mut decompressed_content) {
-            Ok(v) => v,
-            Err(_) => return None,
+    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> io::Result<Vec<u8>> {
+        let file_entry = match self.get_file_entry(file_path) {
+            Some(v) => v.clone(),
+            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
-        Some(decompressed_content)
+        self.obj.seek(SeekFrom::Start(file_entry.offset))?;
+        let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
+        content.resize(file_entry.size_compressed, 0);
+        self.obj.read_exact(content.as_mut_slice())?;
+        // Decompress the table with zlib
+        let mut decoder = ZlibDecoder::new(&content[..]);
+        let mut decompressed_content = Vec::new();
+        let decompressed_size = decoder.read_to_end(&mut decompressed_content)?;
+        if decompressed_size != file_entry.size {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Decompressed content is not as expected",
+            ));
+        }
+        Ok(decompressed_content)
     }
 
-    pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&ThorEntry> {
+    pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&ThorFileEntry> {
         self.container.entries.get(file_path.as_ref())
     }
 
-    pub fn get_entries(&self) -> impl Iterator<Item = &'_ ThorEntry> {
+    pub fn get_entries(&self) -> impl Iterator<Item = &'_ ThorFileEntry> {
         self.container.entries.values()
     }
 }
@@ -102,7 +102,7 @@ impl<R: Read + Seek> ThorArchive<R> {
 pub struct ThorContainer {
     pub header: ThorHeader,
     pub table: ThorTable,
-    pub entries: HashMap<String, ThorEntry>,
+    pub entries: HashMap<String, ThorFileEntry>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -138,21 +138,21 @@ pub struct MultipleFilesTableDesc {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ThorEntry {
+pub struct ThorFileEntry {
     pub size_compressed: usize,
-    pub size_decompressed: usize,
+    pub size: usize,
     pub relative_path: String,
     pub is_removed: bool,
     pub offset: u64,
 }
 
-impl Hash for ThorEntry {
+impl Hash for ThorFileEntry {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.relative_path.hash(state);
     }
 }
 
-fn i16_to_mode(i: i16) -> ThorMode {
+fn i16_to_thor_mode(i: i16) -> ThorMode {
     match i {
         33 => ThorMode::SingleFile,
         48 => ThorMode::MultipleFiles,
@@ -177,7 +177,7 @@ named!(parse_thor_header<&[u8], ThorHeader>,
             >> (ThorHeader {
                 use_grf_merging: use_grf_merging == 1,
                 file_count: (file_count - 1) as usize,
-                mode: i16_to_mode(mode),
+                mode: i16_to_thor_mode(mode),
                 target_grf_name: target_grf_name.to_string(),
             }
     )
@@ -220,15 +220,15 @@ macro_rules! take_string_ansi (
      );
 );
 
-named!(parse_single_file_entry<&[u8], ThorEntry>,
+named!(parse_single_file_entry<&[u8], ThorFileEntry>,
     do_parse!(
         size_compressed: le_i32
-        >> size_decompressed: le_i32
+        >> size: le_i32
         >> relative_path_size: le_u8
         >> relative_path: take_string_ansi!(relative_path_size)
-        >> (ThorEntry {
+        >> (ThorFileEntry {
             size_compressed: size_compressed as usize,
-            size_decompressed: size_decompressed as usize,
+            size: size as usize,
             relative_path: relative_path,
             is_removed: false,
             offset: 0,
@@ -251,17 +251,17 @@ macro_rules! take_if_not_removed (
         );
 );
 
-named!(parse_multiple_files_entry<&[u8], ThorEntry>,
+named!(parse_multiple_files_entry<&[u8], ThorFileEntry>,
     do_parse!(
         relative_path_size: le_u8
         >> relative_path: take_string_ansi!(relative_path_size)
         >> flags: le_u8
         >> offset: take_if_not_removed!(le_u32, flags)
         >> size_compressed: take_if_not_removed!(le_i32, flags)
-        >> size_decompressed: take_if_not_removed!(le_i32, flags)
-        >> (ThorEntry {
+        >> size: take_if_not_removed!(le_i32, flags)
+        >> (ThorFileEntry {
             size_compressed: size_compressed as usize,
-            size_decompressed: size_decompressed as usize,
+            size: size as usize,
             relative_path: relative_path,
             is_removed: is_file_removed(flags),
             offset: offset as u64,
@@ -269,7 +269,7 @@ named!(parse_multiple_files_entry<&[u8], ThorEntry>,
     )
 ));
 
-named!(parse_multiple_files_entries<&[u8], HashMap<String, ThorEntry>>,
+named!(parse_multiple_files_entries<&[u8], HashMap<String, ThorFileEntry>>,
     fold_many1!(parse_multiple_files_entry, HashMap::new(), |mut acc: HashMap<_, _>, item| {
         acc.insert(item.relative_path.clone(), item);
         acc
@@ -350,12 +350,13 @@ mod tests {
             .cloned()
             .collect();
             let check_tiny_thor_entries = |thor: &mut ThorArchive<File>| {
-                let file_entries: Vec<ThorEntry> = thor.get_entries().map(|e| e.clone()).collect();
+                let file_entries: Vec<ThorFileEntry> =
+                    thor.get_entries().map(|e| e.clone()).collect();
                 for file_entry in file_entries {
                     let file_path: &str = &file_entry.relative_path[..];
                     assert!(expected_content.contains_key(file_path));
                     let expected_size = expected_content[file_path];
-                    assert_eq!(file_entry.size_decompressed, expected_size);
+                    assert_eq!(file_entry.size, expected_size);
                 }
             };
             let thor_file_path = thor_dir_path.join("tiny.thor");
