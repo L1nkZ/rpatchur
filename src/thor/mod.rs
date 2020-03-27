@@ -4,7 +4,6 @@ extern crate nom;
 
 use std::borrow::Cow;
 use std::boxed::Box;
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::io;
@@ -22,15 +21,14 @@ const HEADER_MAGIC: &str = "ASSF (C) 2007 Aeomin DEV";
 
 #[derive(Debug)]
 pub struct ThorArchive<R: ?Sized> {
-    pos: Cell<u64>,
     obj: Box<R>,
-    patch: ThorPatch,
+    container: ThorContainer,
 }
 
 impl<R: Read + Seek> ThorArchive<R> {
     /// Create a new archive with the underlying object as the reader.
     pub fn new(mut obj: R) -> io::Result<ThorArchive<R>> {
-        let mut buf: Vec<u8> = vec![];
+        let mut buf = Vec::new();
         // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
         let _bytes_read = obj.read_to_end(&mut buf)?;
         let (_, thor_patch) = match parse_thor_patch(buf.as_slice()) {
@@ -43,14 +41,17 @@ impl<R: Read + Seek> ThorArchive<R> {
             }
         };
         Ok(ThorArchive {
-            pos: Cell::new(0),
             obj: Box::new(obj),
-            patch: thor_patch,
+            container: thor_patch,
         })
     }
 
-    pub fn get_target_grf_name(&self) -> String {
-        self.patch.header.target_grf_name.clone()
+    pub fn file_count(&self) -> usize {
+        self.container.header.file_count
+    }
+
+    pub fn target_grf_name(&self) -> String {
+        self.container.header.target_grf_name.clone()
     }
 
     pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Option<Vec<u8>> {
@@ -76,16 +77,16 @@ impl<R: Read + Seek> ThorArchive<R> {
     }
 
     pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&ThorEntry> {
-        self.patch.entries.get(file_path.as_ref())
+        self.container.entries.get(file_path.as_ref())
     }
 
     pub fn get_entries(&self) -> impl Iterator<Item = &'_ ThorEntry> {
-        self.patch.entries.values()
+        self.container.entries.values()
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct ThorPatch {
+pub struct ThorContainer {
     pub header: ThorHeader,
     pub table: ThorTable,
     pub entries: HashMap<String, ThorEntry>,
@@ -94,7 +95,7 @@ pub struct ThorPatch {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ThorHeader {
     pub use_grf_merging: bool, // false -> client directory, true -> GRF
-    pub nb_of_files: i32,
+    pub file_count: usize,
     pub mode: ThorMode,
     pub target_grf_name: String, // If empty (size == 0) -> default GRF
 }
@@ -156,13 +157,13 @@ named!(parse_thor_header<&[u8], ThorHeader>,
     do_parse!(
         tag!(HEADER_MAGIC)
             >> use_grf_merging: le_u8
-            >> nb_of_files: le_i32
+            >> file_count: le_u32
             >> mode: le_i16
             >> target_grf_name_size: le_u8
             >> target_grf_name: take_str!(target_grf_name_size)
             >> (ThorHeader {
                 use_grf_merging: use_grf_merging == 1,
-                nb_of_files: nb_of_files,
+                file_count: (file_count - 1) as usize,
                 mode: i16_to_mode(mode),
                 target_grf_name: target_grf_name.to_string(),
             }
@@ -262,7 +263,7 @@ named!(parse_multiple_files_entries<&[u8], HashMap<String, ThorEntry>>,
     })
 );
 
-pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorPatch> {
+pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorContainer> {
     let (output, header) = parse_thor_header(input)?;
     match header.mode {
         ThorMode::Invalid => return Err(Err::Failure((input, ErrorKind::Switch))),
@@ -273,7 +274,7 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorPatch> {
             let (output, entry) = parse_single_file_entry(output)?;
             return Ok((
                 output,
-                ThorPatch {
+                ThorContainer {
                     header: header,
                     table: ThorTable::SingleFile(table),
                     entries: [(entry.relative_path.clone(), entry)]
@@ -306,7 +307,7 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorPatch> {
                 };
             return Ok((
                 &[],
-                ThorPatch {
+                ThorContainer {
                     header: header,
                     table: ThorTable::MultipleFiles(table),
                     entries: entries,
@@ -348,7 +349,8 @@ mod tests {
             let thor_file_path = thor_dir_path.join("tiny.thor");
             let thor_file = File::open(thor_file_path).unwrap();
             let mut thor_archive = ThorArchive::new(thor_file).unwrap();
-            assert_eq!(thor_archive.get_target_grf_name(), "");
+            assert_eq!(thor_archive.file_count(), expected_content.len());
+            assert_eq!(thor_archive.target_grf_name(), "");
             check_tiny_thor_entries(&mut thor_archive);
         }
 
@@ -356,7 +358,8 @@ mod tests {
             let thor_file_path = thor_dir_path.join("small.thor");
             let thor_file = File::open(thor_file_path).unwrap();
             let thor_archive = ThorArchive::new(thor_file).unwrap();
-            assert_eq!(thor_archive.get_target_grf_name(), "data.grf");
+            assert_eq!(thor_archive.file_count(), 16);
+            assert_eq!(thor_archive.target_grf_name(), "data.grf");
         }
     }
 }

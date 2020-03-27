@@ -167,7 +167,7 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
                     break;
                 }
             };
-            let patch_target_grf_name = archive.get_target_grf_name();
+            let patch_target_grf_name = archive.target_grf_name();
             if patch_target_grf_name.len() == 0 {
                 println!("Target GRF: {:?}", config.client.default_grf_name);
             } else {
