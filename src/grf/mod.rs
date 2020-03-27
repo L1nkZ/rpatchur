@@ -405,27 +405,50 @@ fold_many_m_n!(1, files_count, parse_grf_file_entry_200, HashMap::new(), |mut ac
 
 #[cfg(test)]
 mod tests {
+    extern crate hex_literal;
+    extern crate twox_hash;
     use super::*;
+    use hex_literal::hex;
+    use std::hash::Hasher;
     use std::path::PathBuf;
+    use twox_hash::XxHash64;
 
     #[test]
     fn test_open_grf_container() {
         let grf_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/grf");
-        let expected_sizes: HashMap<&str, usize> = [
-            ("data\\06guild_r.gat", 800014),
-            ("data\\06guild_r.gnd", 454622),
-            ("data\\06guild_r.rsw", 69798),
+        let expected_content: HashMap<&str, (usize, u64)> = [
+            (
+                "data\\06guild_r.gat",
+                (800014, u64::from_be_bytes(hex!("b740a01075ce37f2"))),
+            ),
+            (
+                "data\\06guild_r.gnd",
+                (454622, u64::from_be_bytes(hex!("213f0c61fff67856"))),
+            ),
+            (
+                "data\\06guild_r.rsw",
+                (69798, u64::from_be_bytes(hex!("519d99273b1b4d38"))),
+            ),
             (
                 "data\\sprite\\\u{B8}\u{F3}\u{BD}\u{BA}\u{C5}\u{CD}\\high_orc.act",
-                491076,
+                (491076, u64::from_be_bytes(hex!("5f26d5f20679a2af"))),
             ),
             (
                 "data\\sprite\\\u{B8}\u{F3}\u{BD}\u{BA}\u{C5}\u{CD}\\high_orc.spr",
-                250592,
+                (250592, u64::from_be_bytes(hex!("b8356a4d4517df6e"))),
             ),
-            ("data\\texture\\chdesk-side1.bmp", 33844),
-            ("data\\texture\\chdesk-side2.bmp", 33844),
-            ("data\\texture\\chdesk-side3.bmp", 17460),
+            (
+                "data\\texture\\chdesk-side1.bmp",
+                (33844, u64::from_be_bytes(hex!("b4bc113b3ca8a655"))),
+            ),
+            (
+                "data\\texture\\chdesk-side2.bmp",
+                (33844, u64::from_be_bytes(hex!("c81a827857725179"))),
+            ),
+            (
+                "data\\texture\\chdesk-side3.bmp",
+                (17460, u64::from_be_bytes(hex!("2c796a702a93682f"))),
+            ),
         ]
         .iter()
         .cloned()
@@ -434,12 +457,16 @@ mod tests {
             let file_entries: Vec<GrfFileEntry> = grf.get_entries().map(|e| e.clone()).collect();
             for file_entry in file_entries {
                 let file_path: &str = &file_entry.relative_path[..];
-                assert!(expected_sizes.contains_key(file_path));
-                assert_eq!(file_entry.size, expected_sizes[file_path]);
-                assert_eq!(
-                    grf.read_file_content(file_path).unwrap().len(),
-                    expected_sizes[file_path]
-                );
+                assert!(expected_content.contains_key(file_path));
+                let (expected_size, expected_hash) = expected_content[file_path];
+                assert_eq!(file_entry.size, expected_size);
+                // Size check
+                let file_content = grf.read_file_content(file_path).unwrap();
+                assert_eq!(file_content.len(), expected_size);
+                // Hash check
+                let mut hasher = XxHash64::default();
+                hasher.write(file_content.as_slice());
+                assert_eq!(hasher.finish(), expected_hash);
             }
         };
         {

@@ -14,3 +14,7 @@ tempfile = "3"
 nom = "^5.1"
 flate2 = "1.0"
 encoding = "0.2"
+
+[dev-dependencies]
+twox-hash = "^1.5"
+hex-literal = "^0.2"
