@@ -5,9 +5,11 @@ extern crate nom;
 use std::borrow::Cow;
 use std::boxed::Box;
 use std::collections::HashMap;
+use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io;
 use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
 
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
@@ -23,6 +25,13 @@ const HEADER_MAGIC: &str = "ASSF (C) 2007 Aeomin DEV";
 pub struct ThorArchive<R: ?Sized> {
     obj: Box<R>,
     container: ThorContainer,
+}
+
+impl ThorArchive<File> {
+    pub fn open(grf_path: &Path) -> io::Result<ThorArchive<File>> {
+        let file = File::open(grf_path)?;
+        ThorArchive::new(file)
+    }
 }
 
 impl<R: Read + Seek> ThorArchive<R> {
@@ -44,6 +53,10 @@ impl<R: Read + Seek> ThorArchive<R> {
             obj: Box::new(obj),
             container: thor_patch,
         })
+    }
+
+    pub fn use_grf_merging(&self) -> bool {
+        self.container.header.use_grf_merging
     }
 
     pub fn file_count(&self) -> usize {
@@ -320,7 +333,6 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorContainer> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::File;
     use std::path::PathBuf;
 
     #[test]
@@ -347,19 +359,19 @@ mod tests {
                 }
             };
             let thor_file_path = thor_dir_path.join("tiny.thor");
-            let thor_file = File::open(thor_file_path).unwrap();
-            let mut thor_archive = ThorArchive::new(thor_file).unwrap();
+            let mut thor_archive = ThorArchive::open(&thor_file_path).unwrap();
             assert_eq!(thor_archive.file_count(), expected_content.len());
             assert_eq!(thor_archive.target_grf_name(), "");
+            assert_eq!(thor_archive.use_grf_merging(), true);
             check_tiny_thor_entries(&mut thor_archive);
         }
 
         {
             let thor_file_path = thor_dir_path.join("small.thor");
-            let thor_file = File::open(thor_file_path).unwrap();
-            let thor_archive = ThorArchive::new(thor_file).unwrap();
+            let thor_archive = ThorArchive::open(&thor_file_path).unwrap();
             assert_eq!(thor_archive.file_count(), 16);
             assert_eq!(thor_archive.target_grf_name(), "data.grf");
+            assert_eq!(thor_archive.use_grf_merging(), true);
         }
     }
 }
