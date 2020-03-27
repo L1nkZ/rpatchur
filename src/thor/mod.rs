@@ -305,13 +305,58 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorPatch> {
                     Err(_) => return Err(Err::Failure((input, ErrorKind::Many1))),
                 };
             return Ok((
-                &input[0..0],
+                &[],
                 ThorPatch {
                     header: header,
                     table: ThorTable::MultipleFiles(table),
                     entries: entries,
                 },
             ));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::path::PathBuf;
+
+    #[test]
+    fn test_open_thor_container() {
+        let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        {
+            let expected_content: HashMap<&str, usize> = [
+                ("data.integrity", 63),
+                (
+                    "data\\texture\\\u{c0}\u{af}\u{c0}\u{fa}\u{c0}\u{ce}\u{c5}\u{cd}\u{c6}\u{e4}\u{c0}\u{cc}\u{bd}\u{ba}\\inventory\\icon_num.bmp",
+                    560,
+                ),
+            ]
+            .iter()
+            .cloned()
+            .collect();
+            let check_tiny_thor_entries = |thor: &mut ThorArchive<File>| {
+                let file_entries: Vec<ThorEntry> = thor.get_entries().map(|e| e.clone()).collect();
+                for file_entry in file_entries {
+                    let file_path: &str = &file_entry.relative_path[..];
+                    assert!(expected_content.contains_key(file_path));
+                    let expected_size = expected_content[file_path];
+                    assert_eq!(file_entry.size_decompressed, expected_size);
+                }
+            };
+            let thor_file_path = thor_dir_path.join("tiny.thor");
+            let thor_file = File::open(thor_file_path).unwrap();
+            let mut thor_archive = ThorArchive::new(thor_file).unwrap();
+            assert_eq!(thor_archive.get_target_grf_name(), "");
+            check_tiny_thor_entries(&mut thor_archive);
+        }
+
+        {
+            let thor_file_path = thor_dir_path.join("small.thor");
+            let thor_file = File::open(thor_file_path).unwrap();
+            let thor_archive = ThorArchive::new(thor_file).unwrap();
+            assert_eq!(thor_archive.get_target_grf_name(), "data.grf");
         }
     }
 }
