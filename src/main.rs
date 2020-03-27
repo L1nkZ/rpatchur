@@ -3,6 +3,7 @@ extern crate url;
 extern crate web_view;
 
 mod config;
+mod grf;
 mod thor;
 
 use std::fs::File;
@@ -12,6 +13,7 @@ use std::process::Command;
 use std::thread;
 
 use config::*;
+use grf::*;
 use thor::*;
 use url::Url;
 use web_view::*;
@@ -84,7 +86,7 @@ fn handle_setup(webview: &mut WebView<PatcherConfiguration>) {
 
 /// Exits the patcher cleanly
 fn handle_exit(webview: &mut WebView<PatcherConfiguration>) {
-    webview.terminate();
+    webview.exit();
 }
 
 /// Cancels the update process

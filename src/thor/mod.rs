@@ -31,8 +31,9 @@ impl<R: Read + Seek> ThorArchive<R> {
     /// Create a new archive with the underlying object as the reader.
     pub fn new(mut obj: R) -> io::Result<ThorArchive<R>> {
         let mut buf: Vec<u8> = vec![];
+        // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
         let _bytes_read = obj.read_to_end(&mut buf)?;
-        let (_, thor_patch) = match parse_thor_patch(buf.as_mut_slice()) {
+        let (_, thor_patch) = match parse_thor_patch(buf.as_slice()) {
             IResult::Ok(v) => v,
             _ => {
                 return Err(io::Error::new(
@@ -61,7 +62,7 @@ impl<R: Read + Seek> ThorArchive<R> {
         }
         let mut buf: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
         buf.resize(file_entry.size_compressed, 0);
-        match self.obj.read(buf.as_mut_slice()) {
+        match self.obj.read_exact(buf.as_mut_slice()) {
             Ok(_) => (),
             Err(_) => return None,
         }
@@ -198,12 +199,12 @@ fn string_from_win_1252(v: &[u8]) -> Result<String, Cow<'static, str>> {
 
 macro_rules! take_string_ansi (
     ( $i:expr, $size:expr ) => (
-       {
-         let input: &[u8] = $i;
-         map_res!(input, take!($size), string_from_win_1252)
-       }
+        {
+            let input: &[u8] = $i;
+            map_res!(input, take!($size), string_from_win_1252)
+        }
      );
-   );
+);
 
 named!(parse_single_file_entry<&[u8], ThorEntry>,
     do_parse!(
@@ -299,7 +300,7 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorPatch> {
             };
             // Parse multiple entries
             let (_output, entries) =
-                match parse_multiple_files_entries(decompressed_table.as_mut_slice()) {
+                match parse_multiple_files_entries(decompressed_table.as_slice()) {
                     Ok(v) => v,
                     Err(_) => return Err(Err::Failure((input, ErrorKind::Many1))),
                 };
