@@ -1,6 +1,6 @@
+extern crate crc;
 extern crate encoding;
 extern crate flate2;
-extern crate log;
 extern crate nom;
 
 use std::borrow::Cow;
@@ -12,16 +12,17 @@ use std::io;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
+use crc::crc32;
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
 use flate2::read::ZlibDecoder;
-use log::{info, trace, warn};
 use nom::error::ErrorKind;
 use nom::number::complete::{le_i16, le_i32, le_u32, le_u8};
 use nom::IResult;
 use nom::*;
 
 const HEADER_MAGIC: &str = "ASSF (C) 2007 Aeomin DEV";
+const INTEGRITY_FILE_NAME: &str = "data.integrity";
 
 type ThorPatchList = Vec<ThorPatchInfo>;
 
@@ -47,32 +48,37 @@ impl ThorPatchInfo {
     /// Returns None in case of failure
     fn from_string(line: &str) -> Option<ThorPatchInfo> {
         let words: Vec<_> = line.trim().split_whitespace().collect();
-        let index_str = match words.get(0) {
-            Some(v) => v,
-            None => {
-                trace!("Ignored invalid line '{}'", line);
-                return None;
-            }
-        };
+        let index_str = words.get(0)?;
         let index = match str::parse(index_str) {
             Ok(v) => v,
             Err(_) => {
-                trace!("Ignored invalid line '{}'", line);
                 return None;
             }
         };
-        let file_name = match words.get(1) {
-            Some(v) => v,
-            None => {
-                trace!("Ignored invalid line '{}'", line);
-                return None;
-            }
-        };
+        let file_name = words.get(1)?;
         Some(ThorPatchInfo {
             index: index,
             file_name: file_name.to_string(),
         })
     }
+}
+
+fn parse_data_integrity_info(data: &str) -> HashMap<&str, u32> {
+    let vec_lines: Vec<_> = data.lines().collect();
+    let vec_integrity_info = vec_lines
+        .into_iter()
+        .filter_map(|line| {
+            let words: Vec<&str> = line.trim().split('=').collect();
+            let file_name = words.get(0)?;
+            let hash_str = words.get(1)?;
+            let hash = match u32::from_str_radix(hash_str.trim_start_matches("0x"), 16) {
+                Ok(v) => v,
+                Err(_) => return None,
+            };
+            Some((*file_name, hash))
+        })
+        .collect();
+    vec_integrity_info
 }
 
 #[derive(Debug)]
@@ -149,6 +155,29 @@ impl<R: Read + Seek> ThorArchive<R> {
 
     pub fn get_entries(&self) -> impl Iterator<Item = &'_ ThorFileEntry> {
         self.container.entries.values()
+    }
+
+    /// Checks if the container has been unintentionnaly corrupted
+    pub fn is_valid(&mut self) -> bool {
+        let integrity_data = match self.read_file_content(INTEGRITY_FILE_NAME) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let integrity_data_as_str = match string_from_win_1252(integrity_data.as_slice()) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let integrity_info = parse_data_integrity_info(integrity_data_as_str.as_str());
+        for (file_path, hash) in integrity_info {
+            let file_content = match self.read_file_content(file_path) {
+                Ok(v) => v,
+                Err(_) => return false,
+            };
+            if crc32::checksum_ieee(file_content.as_slice()) != hash {
+                return false;
+            }
+        }
+        true
     }
 }
 
@@ -447,16 +476,18 @@ mod tests {
             let mut thor_archive = ThorArchive::open(&thor_file_path).unwrap();
             assert_eq!(thor_archive.file_count(), expected_content.len());
             assert_eq!(thor_archive.target_grf_name(), "");
-            assert_eq!(thor_archive.use_grf_merging(), true);
+            assert!(thor_archive.use_grf_merging());
             check_tiny_thor_entries(&mut thor_archive);
+            assert!(thor_archive.is_valid());
         }
 
         {
             let thor_file_path = thor_dir_path.join("small.thor");
-            let thor_archive = ThorArchive::open(&thor_file_path).unwrap();
+            let mut thor_archive = ThorArchive::open(&thor_file_path).unwrap();
             assert_eq!(thor_archive.file_count(), 16);
             assert_eq!(thor_archive.target_grf_name(), "data.grf");
-            assert_eq!(thor_archive.use_grf_merging(), true);
+            assert!(thor_archive.use_grf_merging());
+            assert!(thor_archive.is_valid());
         }
     }
 }
