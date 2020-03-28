@@ -959,6 +959,7 @@ dependencies = [
  "encoding",
  "flate2",
  "hex-literal",
+ "log",
  "nom 5.1.0",
  "reqwest",
  "serde",

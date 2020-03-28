@@ -1,5 +1,6 @@
 extern crate encoding;
 extern crate flate2;
+extern crate log;
 extern crate nom;
 
 use std::borrow::Cow;
@@ -14,12 +15,65 @@ use std::path::Path;
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
 use flate2::read::ZlibDecoder;
+use log::{info, trace, warn};
 use nom::error::ErrorKind;
 use nom::number::complete::{le_i16, le_i32, le_u32, le_u8};
 use nom::IResult;
 use nom::*;
 
 const HEADER_MAGIC: &str = "ASSF (C) 2007 Aeomin DEV";
+
+type ThorPatchList = Vec<ThorPatchInfo>;
+
+/// Parses Thor's plist.txt file
+pub fn patch_list_from_string(content: &str) -> ThorPatchList {
+    let vec_lines: Vec<&str> = content.lines().collect();
+    let vec_patch_info = vec_lines
+        .into_iter()
+        .filter_map(|elem| ThorPatchInfo::from_string(&elem))
+        .collect();
+    vec_patch_info
+}
+
+#[derive(Debug)]
+pub struct ThorPatchInfo {
+    pub index: usize,
+    pub file_name: String,
+}
+
+impl ThorPatchInfo {
+    /// Parses a line to extract patch index and patch file name.
+    /// Returns a PatchInfo struct in case of success.
+    /// Returns None in case of failure
+    fn from_string(line: &str) -> Option<ThorPatchInfo> {
+        let words: Vec<_> = line.trim().split_whitespace().collect();
+        let index_str = match words.get(0) {
+            Some(v) => v,
+            None => {
+                trace!("Ignored invalid line '{}'", line);
+                return None;
+            }
+        };
+        let index = match str::parse(index_str) {
+            Ok(v) => v,
+            Err(_) => {
+                trace!("Ignored invalid line '{}'", line);
+                return None;
+            }
+        };
+        let file_name = match words.get(1) {
+            Some(v) => v,
+            None => {
+                trace!("Ignored invalid line '{}'", line);
+                return None;
+            }
+        };
+        Some(ThorPatchInfo {
+            index: index,
+            file_name: file_name.to_string(),
+        })
+    }
+}
 
 #[derive(Debug)]
 pub struct ThorArchive<R: ?Sized> {
@@ -334,6 +388,36 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorContainer> {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn test_patch_list_from_string() {
+        let plist_content = "//869 iteminfo_20170423.thor
+870 iteminfo_20170423_.thor
+871 sprites_20170427.thor
+872 sprites_20170429.thor
+//873 rodex_20170501.thor
+//874 strings_20170501.thor
+875 rodex_20170501_.thor";
+        let expected_content: HashMap<usize, &str> = [
+            (870, "iteminfo_20170423_.thor"),
+            (871, "sprites_20170427.thor"),
+            (872, "sprites_20170429.thor"),
+            (875, "rodex_20170501_.thor"),
+        ]
+        .iter()
+        .cloned()
+        .collect();
+        //Empty patch list
+        let empty_thor_patch_list = patch_list_from_string("");
+        assert_eq!(empty_thor_patch_list.len(), 0);
+        // Regular patch list
+        let thor_patch_list = patch_list_from_string(plist_content);
+        assert_eq!(thor_patch_list.len(), expected_content.len());
+        for patch_info in thor_patch_list {
+            assert!(expected_content.contains_key(&patch_info.index));
+            assert_eq!(patch_info.file_name, expected_content[&patch_info.index]);
+        }
+    }
 
     #[test]
     fn test_open_thor_container() {
