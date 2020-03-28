@@ -1,3 +1,4 @@
+extern crate log;
 extern crate tempfile;
 extern crate url;
 extern crate web_view;
@@ -14,6 +15,7 @@ use std::thread;
 
 use config::*;
 use grf::*;
+use log::{info, trace, warn};
 use thor::*;
 use url::Url;
 use web_view::*;
@@ -21,14 +23,8 @@ use web_view::*;
 const PATCH_LIST_FILE_NAME: &str = "plist.txt";
 
 #[derive(Debug)]
-struct PatchInfo {
-    index: i32,
-    file_name: String,
-}
-
-#[derive(Debug)]
 struct PendingPatch {
-    info: PatchInfo,
+    info: thor::ThorPatchInfo,
     local_file: File,
 }
 
@@ -66,9 +62,9 @@ fn handle_play(webview: &mut WebView<PatcherConfiguration>) {
     let client_path: &String = &webview.user_data().play.path;
     let client_argument: &String = &webview.user_data().play.argument;
     match Command::new(client_path).arg(client_argument).spawn() {
-        Ok(child) => println!("Client started: pid={}", child.id()),
+        Ok(child) => trace!("Client started: pid={}", child.id()),
         Err(e) => {
-            println!("Failed to start client: {}", e);
+            warn!("Failed to start client: {}", e);
         }
     }
 }
@@ -77,9 +73,9 @@ fn handle_play(webview: &mut WebView<PatcherConfiguration>) {
 fn handle_setup(webview: &mut WebView<PatcherConfiguration>) {
     let setup_exe: &String = &webview.user_data().setup.path;
     match Command::new(setup_exe).spawn() {
-        Ok(child) => println!("Setup software started: pid={}", child.id()),
+        Ok(child) => trace!("Setup software started: pid={}", child.id()),
         Err(e) => {
-            println!("Failed to start setup software: {}", e);
+            warn!("Failed to start setup software: {}", e);
         }
     }
 }
@@ -91,22 +87,22 @@ fn handle_exit(webview: &mut WebView<PatcherConfiguration>) {
 
 /// Cancels the update process
 fn handle_cancel_update(_webview: &mut WebView<PatcherConfiguration>) {
-    println!("FIXME: cancel_update");
+    warn!("FIXME: cancel_update");
 }
 
 /// Resets the cache used to keep track of already applied patches
 fn handle_reset_cache(_webview: &mut WebView<PatcherConfiguration>) {
-    println!("FIXME: reset_cache");
+    warn!("FIXME: reset_cache");
 }
 
 fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        println!("Patching thread started.");
+        trace!("Patching thread started.");
         let patch_url = Url::parse(config.web.patch_url.as_str()).unwrap();
         let patch_list_url = patch_url.join(PATCH_LIST_FILE_NAME).unwrap();
         let resp = reqwest::blocking::get(patch_list_url).unwrap();
         if !resp.status().is_success() {
-            println!(
+            warn!(
                 "Patch list '{}' not found on the remote server, aborting.",
                 PATCH_LIST_FILE_NAME
             );
@@ -116,16 +112,17 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
             Ok(v) => v,
             Err(_) => return,
         };
-        let patch_list = patch_list_from_string(patch_index_content.as_str());
-        println!("Successfully fetched patch list: {:?}", patch_list);
+        info!("Parsing patch index...");
+        let patch_list = thor::patch_list_from_string(patch_index_content.as_str());
+        info!("Successfully fetched patch list: {:?}", patch_list);
         // Try fetching patch files
-        print!("Downloading patches... ");
+        info!("Downloading patches... ");
         let mut pending_patch_queue: Vec<PendingPatch> = vec![];
         for patch in patch_list {
             let patch_file_url = match patch_url.join(patch.file_name.as_str()) {
                 Ok(v) => v,
                 Err(_) => {
-                    println!(
+                    warn!(
                         "Invalid file name given in '{}': '{}', aborting.",
                         PATCH_LIST_FILE_NAME, patch.file_name
                     );
@@ -135,7 +132,7 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
             let mut tmp_file = tempfile::tempfile().unwrap();
             let mut resp = reqwest::blocking::get(patch_file_url).unwrap();
             if !resp.status().is_success() {
-                println!(
+                warn!(
                     "Patch file '{}' not found on the remote server, aborting.",
                     patch.file_name
                 );
@@ -144,7 +141,7 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
             let _bytes_copied = match resp.copy_to(&mut tmp_file) {
                 Ok(v) => v,
                 Err(_) => {
-                    println!("Failed to download file '{}', aborting.", patch.file_name);
+                    warn!("Failed to download file '{}', aborting.", patch.file_name);
                     return;
                 }
             };
@@ -155,71 +152,29 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
                 local_file: tmp_file,
             });
         }
-        println!("Done");
+        info!("Done");
         // Proceed with actual patching
-        println!("Applying patches...");
+        info!("Applying patches...");
         for pending_patch in pending_patch_queue {
-            println!("Processing {}", pending_patch.info.file_name);
+            info!("Processing {}", pending_patch.info.file_name);
             let archive = match ThorArchive::new(pending_patch.local_file) {
                 Ok(v) => v,
                 Err(_) => {
-                    println!("Cannot read '{}', aborting.", pending_patch.info.file_name);
+                    warn!("Cannot read '{}', aborting.", pending_patch.info.file_name);
                     break;
                 }
             };
-            let patch_target_grf_name = archive.get_target_grf_name();
+            let patch_target_grf_name = archive.target_grf_name();
             if patch_target_grf_name.len() == 0 {
-                println!("Target GRF: {:?}", config.client.default_grf_name);
+                trace!("Target GRF: {:?}", config.client.default_grf_name);
             } else {
-                println!("Target GRF: {:?}", patch_target_grf_name);
+                trace!("Target GRF: {:?}", patch_target_grf_name);
             }
-            println!("Entries:");
+            trace!("Entries:");
             for entry in archive.get_entries() {
-                println!("{:?}", entry);
+                trace!("{:?}", entry);
             }
         }
-        println!("Patching finished!");
-    })
-}
-
-fn patch_list_from_string(content: &str) -> Vec<PatchInfo> {
-    println!("Parsing patch index...");
-    let vec_lines: Vec<&str> = content.lines().collect();
-    let vec_patch_info = vec_lines
-        .into_iter()
-        .filter_map(|elem| patch_info_from_string(&elem))
-        .collect();
-    vec_patch_info
-}
-
-/// Parses a line to extract patch index and patch file name.
-/// Returns a PatchInfo struct in case of success.
-/// Returns None in case of failure
-fn patch_info_from_string(line: &str) -> Option<PatchInfo> {
-    let words: Vec<_> = line.trim().split_whitespace().collect();
-    let index_str = match words.get(0) {
-        Some(v) => v,
-        None => {
-            println!("Ignored invalid line '{}'", line);
-            return None;
-        }
-    };
-    let index = match str::parse(index_str) {
-        Ok(v) => v,
-        Err(_) => {
-            println!("Ignored invalid line '{}'", line);
-            return None;
-        }
-    };
-    let file_name = match words.get(1) {
-        Some(v) => v,
-        None => {
-            println!("Ignored invalid line '{}'", line);
-            return None;
-        }
-    };
-    Some(PatchInfo {
-        index: index,
-        file_name: file_name.to_string(),
+        info!("Patching finished!");
     })
 }
