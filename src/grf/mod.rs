@@ -31,7 +31,7 @@ pub struct GrfArchive {
 
 impl GrfArchive {
     /// Create a new archive with the underlying object as the reader.
-    pub fn new(grf_path: &Path) -> io::Result<GrfArchive> {
+    pub fn open(grf_path: &Path) -> io::Result<GrfArchive> {
         let mut file = File::open(grf_path)?;
         // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
         let mut buf = vec![];
@@ -472,7 +472,7 @@ mod tests {
         };
         {
             let grf_path = grf_dir_path.join("200-empty.grf");
-            let grf = GrfArchive::new(&grf_path).unwrap();
+            let grf = GrfArchive::open(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 0);
             assert_eq!(grf.version_major(), 2);
             assert_eq!(grf.version_minor(), 0);
@@ -480,7 +480,7 @@ mod tests {
 
         {
             let grf_path = grf_dir_path.join("200-small.grf");
-            let mut grf = GrfArchive::new(&grf_path).unwrap();
+            let mut grf = GrfArchive::open(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 8);
             assert_eq!(grf.version_major(), 2);
             assert_eq!(grf.version_minor(), 0);
@@ -489,7 +489,7 @@ mod tests {
 
         {
             let grf_path = grf_dir_path.join("103-empty.grf");
-            let grf = GrfArchive::new(&grf_path).unwrap();
+            let grf = GrfArchive::open(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 0);
             assert_eq!(grf.version_major(), 1);
             assert_eq!(grf.version_minor(), 3);
@@ -497,7 +497,7 @@ mod tests {
 
         {
             let grf_path = grf_dir_path.join("103-small.grf");
-            let mut grf = GrfArchive::new(&grf_path).unwrap();
+            let mut grf = GrfArchive::open(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 8);
             assert_eq!(grf.version_major(), 1);
             assert_eq!(grf.version_minor(), 3);
@@ -506,7 +506,7 @@ mod tests {
 
         {
             let grf_path = grf_dir_path.join("102-empty.grf");
-            let grf = GrfArchive::new(&grf_path).unwrap();
+            let grf = GrfArchive::open(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 0);
             assert_eq!(grf.version_major(), 1);
             assert_eq!(grf.version_minor(), 2);
@@ -514,7 +514,7 @@ mod tests {
 
         {
             let grf_path = grf_dir_path.join("102-small.grf");
-            let mut grf = GrfArchive::new(&grf_path).unwrap();
+            let mut grf = GrfArchive::open(&grf_path).unwrap();
             assert_eq!(grf.file_count(), 8);
             assert_eq!(grf.version_major(), 1);
             assert_eq!(grf.version_minor(), 2);
