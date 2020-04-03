@@ -1,7 +1,3 @@
-extern crate encoding;
-extern crate flate2;
-extern crate nom;
-
 mod crypto;
 
 use std::borrow::Cow;

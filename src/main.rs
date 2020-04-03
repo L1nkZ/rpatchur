@@ -1,8 +1,3 @@
-extern crate log;
-extern crate tempfile;
-extern crate url;
-extern crate web_view;
-
 mod config;
 mod grf;
 mod thor;

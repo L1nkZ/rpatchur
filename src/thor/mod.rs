@@ -1,8 +1,3 @@
-extern crate crc;
-extern crate encoding;
-extern crate flate2;
-extern crate nom;
-
 use std::borrow::Cow;
 use std::boxed::Box;
 use std::collections::HashMap;
