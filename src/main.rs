@@ -165,7 +165,7 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
                 }
             };
             let patch_target_grf_name = archive.target_grf_name();
-            if patch_target_grf_name.len() == 0 {
+            if patch_target_grf_name.is_empty() {
                 trace!("Target GRF: {:?}", config.client.default_grf_name);
             } else {
                 trace!("Target GRF: {:?}", patch_target_grf_name);

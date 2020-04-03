@@ -29,11 +29,10 @@ type ThorPatchList = Vec<ThorPatchInfo>;
 /// Parses Thor's plist.txt file
 pub fn patch_list_from_string(content: &str) -> ThorPatchList {
     let vec_lines: Vec<&str> = content.lines().collect();
-    let vec_patch_info = vec_lines
+    vec_lines
         .into_iter()
         .filter_map(|elem| ThorPatchInfo::from_string(&elem))
-        .collect();
-    vec_patch_info
+        .collect()
 }
 
 #[derive(Debug)]
@@ -57,15 +56,15 @@ impl ThorPatchInfo {
         };
         let file_name = words.get(1)?;
         Some(ThorPatchInfo {
-            index: index,
-            file_name: file_name.to_string(),
+            index,
+            file_name: (*file_name).to_string(),
         })
     }
 }
 
 fn parse_data_integrity_info(data: &str) -> HashMap<&str, u32> {
     let vec_lines: Vec<_> = data.lines().collect();
-    let vec_integrity_info = vec_lines
+    vec_lines
         .into_iter()
         .filter_map(|line| {
             let words: Vec<&str> = line.trim().split('=').collect();
@@ -77,8 +76,7 @@ fn parse_data_integrity_info(data: &str) -> HashMap<&str, u32> {
             };
             Some((*file_name, hash))
         })
-        .collect();
-    vec_integrity_info
+        .collect()
 }
 
 #[derive(Debug)]
@@ -133,8 +131,7 @@ impl<R: Read + Seek> ThorArchive<R> {
             None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
         self.obj.seek(SeekFrom::Start(file_entry.offset))?;
-        let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
-        content.resize(file_entry.size_compressed, 0);
+        let mut content: Vec<u8> = vec![0; file_entry.size_compressed];
         self.obj.read_exact(content.as_mut_slice())?;
         // Decompress the table with zlib
         let mut decoder = ZlibDecoder::new(&content[..]);
@@ -220,7 +217,7 @@ pub struct MultipleFilesTableDesc {
     pub file_table_offset: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Eq)]
 pub struct ThorFileEntry {
     pub size_compressed: usize,
     pub size: usize,
@@ -232,6 +229,12 @@ pub struct ThorFileEntry {
 impl Hash for ThorFileEntry {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.relative_path.hash(state);
+    }
+}
+
+impl PartialEq for ThorFileEntry {
+    fn eq(&self, other: &ThorFileEntry) -> bool {
+        self.relative_path == other.relative_path
     }
 }
 
@@ -362,23 +365,23 @@ named!(parse_multiple_files_entries<&[u8], HashMap<String, ThorFileEntry>>,
 pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorContainer> {
     let (output, header) = parse_thor_header(input)?;
     match header.mode {
-        ThorMode::Invalid => return Err(Err::Failure((input, ErrorKind::Switch))),
+        ThorMode::Invalid => Err(Err::Failure((input, ErrorKind::Switch))),
         ThorMode::SingleFile => {
             // Parse table
             let (output, table) = parse_single_file_table(output)?;
             // Parse the single entry
             let (output, entry) = parse_single_file_entry(output)?;
-            return Ok((
+            Ok((
                 output,
                 ThorContainer {
-                    header: header,
+                    header,
                     table: ThorTable::SingleFile(table),
                     entries: [(entry.relative_path.clone(), entry)]
                         .iter()
                         .cloned()
                         .collect(),
                 },
-            ));
+            ))
         }
         ThorMode::MultipleFiles => {
             let (output, mut table) = parse_multiple_files_table(output)?;
@@ -401,14 +404,14 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorContainer> {
                     Ok(v) => v,
                     Err(_) => return Err(Err::Failure((input, ErrorKind::Many1))),
                 };
-            return Ok((
+            Ok((
                 &[],
                 ThorContainer {
-                    header: header,
+                    header,
                     table: ThorTable::MultipleFiles(table),
-                    entries: entries,
+                    entries,
                 },
-            ));
+            ))
         }
     }
 }

@@ -8,7 +8,7 @@ const SHIFTS: [u8; 16] = [1, 1, 2, 2, 2, 2, 2, 2, 1, 2, 2, 2, 2, 2, 2, 1];
 // rearranged so that the bottom four bits choose the column and the top two
 // bits choose the row. In other words, we can directly index the sbox array
 // with the 6 input bits to get the correct value.
-#[cfg_attr(rustfmt, rustfmt_skip)]
+#[rustfmt::skip]
 const SBOXES: [[u8; 64]; 8] = [
     [
         14,  0,  4, 15, 13,  7,  1,  4,  2, 14, 15,  2, 11, 13,  8,  1,
@@ -169,7 +169,7 @@ pub fn gen_keys(key: u64) -> [u64; 16] {
     let key = key >> 8;
 
     let mut c = key >> 28;
-    let mut d = key & 0x0FFFFFFF;
+    let mut d = key & 0x0FFF_FFFF;
     for i in 0..16 {
         c = rotate(c, SHIFTS[i]);
         d = rotate(d, SHIFTS[i]);
@@ -187,7 +187,7 @@ fn rotate(mut val: u64, shift: u8) -> u64 {
     let top_bits = val >> (28 - shift);
     val <<= shift;
 
-    (val | top_bits) & 0x0FFFFFFF
+    (val | top_bits) & 0x0FFF_FFFF
 }
 
 fn round(input: u64, key: u64) -> u64 {
@@ -207,8 +207,7 @@ fn f(input: u64, key: u64) -> u64 {
 /// Applies all eight sboxes to the input
 fn apply_sboxes(input: u64) -> u64 {
     let mut output: u64 = 0;
-    for i in 0..8 {
-        let sbox = SBOXES[i];
+    for (i, sbox) in SBOXES.iter().enumerate() {
         let val = (input >> (58 - (i * 6))) & 0x3F;
         output |= (sbox[val as usize] as u64) << (60 - (i * 4));
     }
