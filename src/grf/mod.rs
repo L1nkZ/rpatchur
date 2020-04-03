@@ -1,5 +1,3 @@
-mod crypto;
-
 use std::borrow::Cow;
 use std::boxed::Box;
 use std::collections::HashMap;
@@ -10,6 +8,8 @@ use std::io;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::str;
+
+mod crypto;
 
 use crypto::{decrypt_file_content, decrypt_file_name};
 use encoding::label::encoding_from_whatwg_label;
@@ -406,11 +406,8 @@ fold_many_m_n!(1, files_count, parse_grf_file_entry_200, HashMap::new(), |mut ac
 
 #[cfg(test)]
 mod tests {
-    extern crate hex_literal;
-    extern crate twox_hash;
     use super::*;
     use hex_literal::hex;
-    use std::hash::Hasher;
     use std::path::PathBuf;
     use twox_hash::XxHash64;
 

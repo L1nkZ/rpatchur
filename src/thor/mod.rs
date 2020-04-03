@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
 use std::io;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crc::crc32;
@@ -81,8 +81,8 @@ pub struct ThorArchive<R: ?Sized> {
 }
 
 impl ThorArchive<File> {
-    pub fn open(grf_path: &Path) -> io::Result<ThorArchive<File>> {
-        let file = File::open(grf_path)?;
+    pub fn open(thor_archive_path: &Path) -> io::Result<ThorArchive<File>> {
+        let file = File::open(thor_archive_path)?;
         ThorArchive::new(file)
     }
 }
@@ -141,6 +141,16 @@ impl<R: Read + Seek> ThorArchive<R> {
         Ok(decompressed_content)
     }
 
+    pub fn extract_file<S: AsRef<str> + Hash>(
+        &mut self,
+        file_path: S,
+        destination_path: &Path,
+    ) -> io::Result<()> {
+        let content = self.read_file_content(file_path)?;
+        let mut file = File::create(destination_path)?;
+        file.write_all(content.as_slice())
+    }
+
     pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&ThorFileEntry> {
         self.container.entries.get(file_path.as_ref())
     }
@@ -176,7 +186,7 @@ impl<R: Read + Seek> ThorArchive<R> {
 #[derive(Debug, PartialEq, Eq)]
 pub struct ThorContainer {
     pub header: ThorHeader,
-    pub table: ThorTable,
+    table: ThorTable,
     pub entries: HashMap<String, ThorFileEntry>,
 }
 
@@ -184,32 +194,32 @@ pub struct ThorContainer {
 pub struct ThorHeader {
     pub use_grf_merging: bool, // false -> client directory, true -> GRF
     pub file_count: usize,
-    pub mode: ThorMode,
+    mode: ThorMode,
     pub target_grf_name: String, // If empty (size == 0) -> default GRF
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ThorMode {
+enum ThorMode {
     SingleFile,
     MultipleFiles,
     Invalid,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum ThorTable {
+enum ThorTable {
     SingleFile(SingleFileTableDesc),
     MultipleFiles(MultipleFilesTableDesc),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct SingleFileTableDesc {
-    pub file_table_offset: u64,
+struct SingleFileTableDesc {
+    file_table_offset: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct MultipleFilesTableDesc {
-    pub file_table_compressed_size: usize,
-    pub file_table_offset: u64,
+struct MultipleFilesTableDesc {
+    file_table_compressed_size: usize,
+    file_table_offset: u64,
 }
 
 #[derive(Debug, Clone, Eq)]

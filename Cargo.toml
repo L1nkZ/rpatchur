@@ -20,3 +20,4 @@ crc = "^1.8"
 [dev-dependencies]
 twox-hash = "^1.5"
 hex-literal = "^0.2"
+tempfile = "^3.1"

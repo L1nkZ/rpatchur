@@ -1,8 +1,8 @@
-mod des;
-
 use std::cmp;
 use std::convert::TryInto;
 use std::result::Result;
+
+mod des;
 
 const DES_BLOCK_SIZE: usize = 8; // Block size in bytes
 
