@@ -6,8 +6,8 @@ edition = "2018"
 
 [dependencies]
 web-view = "^0.6"
-serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 reqwest = { version = "0.10", features = ["blocking"] }
 url = "2.1"
 tempfile = "3"
@@ -15,9 +15,12 @@ nom = "^5.1"
 flate2 = "1.0"
 encoding = "0.2"
 log = "0.4"
+simple_logger = "1.6"
 crc = "^1.8"
+bincode = "1.2.1"
 
 [dev-dependencies]
 twox-hash = "^1.5"
 hex-literal = "^0.2"
 tempfile = "^3.1"
+walkdir = "2"

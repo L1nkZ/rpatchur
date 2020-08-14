@@ -1,0 +1,190 @@
+use std::collections::HashMap;
+use std::fs;
+use std::io;
+use std::io::{Read, Seek};
+use std::path::{Path, PathBuf};
+
+use crate::grf::builder::*;
+use crate::grf::*;
+use crate::thor::*;
+
+enum DataTransformation {
+    None,
+    // DecompressZlib,
+}
+
+struct MergeEntry {
+    // pub relative_path: String,
+    pub source_id: usize,
+    pub source_offset: u64,
+    pub data_size: usize,
+    pub transformation: DataTransformation,
+}
+
+pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
+    grf_file_path: P,
+    thor_archive: &mut ThorArchive<R>,
+) -> io::Result<()> {
+    // Rename file to back it up
+    let mut backup_file_path = grf_file_path.as_ref().to_path_buf();
+    backup_file_path.set_extension("grf.bak");
+    fs::rename(grf_file_path.as_ref(), &backup_file_path)?;
+
+    // Prepare file entries that'll be used to make the patched GRF
+    let mut merge_entries: HashMap<String, MergeEntry> = HashMap::new();
+    // Add files from the original archive while discarding files remove in the patch
+    let mut grf_archive = GrfArchive::open(&backup_file_path)?;
+    for entry in grf_archive.get_entries() {
+        if let Some(e) = thor_archive.get_file_entry(&entry.relative_path) {
+            if e.is_removed {
+                continue;
+            }
+        }
+        merge_entries.insert(
+            entry.relative_path.clone(),
+            MergeEntry {
+                source_id: 0, // Original GRF
+                source_offset: entry.offset,
+                data_size: entry.size_compressed,
+                transformation: DataTransformation::None,
+            },
+        );
+    }
+    // Add files from the patch
+    for entry in thor_archive.get_entries() {
+        if entry.is_removed || entry.is_internal() {
+            continue;
+        }
+        merge_entries.insert(
+            entry.relative_path.clone(),
+            MergeEntry {
+                source_id: 1, // First THOR archive
+                source_offset: entry.offset,
+                data_size: entry.size_compressed,
+                transformation: DataTransformation::None,
+            },
+        );
+    }
+
+    {
+        let grf_file = fs::File::create(grf_file_path)?;
+        let mut builder = GrfArchiveBuilder::new(grf_file, 2, 0)?;
+        for (relative_path, entry) in merge_entries {
+            match entry.source_id {
+                0 => {
+                    // TODO: RAW file content copy
+                    let data = grf_archive.read_file_content(&relative_path)?;
+                    builder.append_file(relative_path, data.as_slice())?;
+                }
+                1 => {
+                    // TODO: RAW file content copy
+                    let data = thor_archive.read_file_content(&relative_path)?;
+                    builder.append_file(relative_path, data.as_slice())?;
+                }
+                _ => {}
+            }
+        }
+    }
+    // Remove backup file once the patched GRF has been built
+    fs::remove_file(backup_file_path)
+}
+
+pub fn apply_patch_to_disk<P: AsRef<Path>, R: Read + Seek>(
+    root_directory: P,
+    thor_archive: &mut ThorArchive<R>,
+) -> io::Result<()> {
+    // TODO(LinkZ): Save original files before updating/removing them in order
+    // to be able to restore them in case of failure
+    // TODO(LinkZ): Make async?
+    let file_entries: Vec<ThorFileEntry> = thor_archive.get_entries().cloned().collect();
+    for entry in file_entries {
+        let dest_path = join_windows_relative_path(root_directory.as_ref(), &entry.relative_path);
+        if entry.is_removed {
+            fs::remove_file(dest_path)?;
+        } else if !entry.is_internal() {
+            // Create parent directory if needed
+            if let Some(parent_dir) = dest_path.parent() {
+                fs::create_dir_all(parent_dir)?
+            }
+            // Extract file
+            thor_archive.extract_file(&entry.relative_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn join_windows_relative_path(path: &Path, windows_relative_path: &str) -> PathBuf {
+    let mut result = PathBuf::from(path);
+    for component in windows_relative_path.split('\\') {
+        result.push(component);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+    use walkdir::WalkDir;
+
+    #[test]
+    fn test_apply_patch_to_disk() {
+        let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        {
+            let temp_dir = tempdir().unwrap();
+            let count_files = |dir_path| {
+                WalkDir::new(dir_path)
+                    .into_iter()
+                    .filter_map(|e| e.ok())
+                    .filter_map(|entry| entry.metadata().ok())
+                    .filter(|metadata| metadata.is_file())
+                    .count()
+            };
+            let expected_file_path = temp_dir
+                .path()
+                .join("data/wav/se_subterranean_rustyengine.wav");
+            let thor_archive_path = thor_dir_path.join("small.thor");
+            let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
+            let nb_of_added_files = thor_archive.file_count() - 1;
+
+            // Before patching
+            assert!(!expected_file_path.exists());
+            assert_eq!(0, count_files(temp_dir.path()));
+
+            apply_patch_to_disk(temp_dir.path(), &mut thor_archive).unwrap();
+
+            // After patching
+            assert!(expected_file_path.exists());
+            assert_eq!(nb_of_added_files, count_files(temp_dir.path()));
+        }
+    }
+
+    #[test]
+    fn test_apply_patch_to_grf() {
+        let grf_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/grf");
+        let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        {
+            let temp_dir = tempdir().unwrap();
+
+            let thor_archive_path = thor_dir_path.join("small.thor");
+            let grf_archive_path = temp_dir.path().join("empty.grf");
+            fs::copy(grf_dir_path.join("200-empty.grf"), &grf_archive_path).unwrap();
+
+            // Before patching
+            let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
+            assert_eq!(0, grf_archive.file_count());
+            let grf_version_major = grf_archive.version_major();
+            let grf_version_minor = grf_archive.version_minor();
+
+            let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
+            let nb_of_added_files = thor_archive.file_count() - 1;
+            apply_patch_to_grf(&grf_archive_path, &mut thor_archive).unwrap();
+
+            // After patching
+            let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
+            assert_eq!(nb_of_added_files, grf_archive.file_count());
+            assert_eq!(grf_archive.version_major(), grf_version_major);
+            assert_eq!(grf_archive.version_minor(), grf_version_minor);
+        }
+    }
+}

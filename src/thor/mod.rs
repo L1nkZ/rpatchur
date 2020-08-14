@@ -231,6 +231,12 @@ pub struct ThorFileEntry {
     pub offset: u64,
 }
 
+impl ThorFileEntry {
+    pub fn is_internal(&self) -> bool {
+        self.relative_path == INTEGRITY_FILE_NAME
+    }
+}
+
 impl Hash for ThorFileEntry {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.relative_path.hash(state);
@@ -285,7 +291,7 @@ named!(parse_single_file_table<&[u8], SingleFileTableDesc>,
 
 named!(parse_multiple_files_table<&[u8], MultipleFilesTableDesc>,
     do_parse!(
-        file_table_compressed_size: le_i32 
+        file_table_compressed_size: le_i32
         >> file_table_offset: le_i32
         >> (MultipleFilesTableDesc {
             file_table_compressed_size: file_table_compressed_size as usize,
@@ -320,7 +326,7 @@ named!(parse_single_file_entry<&[u8], ThorFileEntry>,
         >> (ThorFileEntry {
             size_compressed: size_compressed as usize,
             size: size as usize,
-            relative_path: relative_path,
+            relative_path,
             is_removed: false,
             offset: 0,
         }
@@ -353,7 +359,7 @@ named!(parse_multiple_files_entry<&[u8], ThorFileEntry>,
         >> (ThorFileEntry {
             size_compressed: size_compressed as usize,
             size: size as usize,
-            relative_path: relative_path,
+            relative_path,
             is_removed: is_file_removed(flags),
             offset: offset as u64,
         }
@@ -471,8 +477,7 @@ mod tests {
             .cloned()
             .collect();
             let check_tiny_thor_entries = |thor: &mut ThorArchive<File>| {
-                let file_entries: Vec<ThorFileEntry> =
-                    thor.get_entries().map(|e| e.clone()).collect();
+                let file_entries: Vec<ThorFileEntry> = thor.get_entries().cloned().collect();
                 for file_entry in file_entries {
                     let file_path: &str = &file_entry.relative_path[..];
                     assert!(expected_content.contains_key(file_path));

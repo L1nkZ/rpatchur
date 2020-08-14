@@ -1,21 +1,20 @@
+mod config;
+mod grf;
+mod patching;
+mod thor;
+
 use std::fs::File;
 use std::io::prelude::*;
 use std::io::SeekFrom;
 use std::process::Command;
 use std::thread;
 
-mod config;
-mod grf;
-mod patch;
-mod thor;
-
-use config::*;
-//use grf::*;
+use config::{parse_configuration, PatcherConfiguration};
 use log::{info, trace, warn};
-//use patch::*;
-use thor::*;
+use patching::{apply_patch_to_disk, apply_patch_to_grf};
+use thor::ThorArchive;
 use url::Url;
-use web_view::*;
+use web_view::{Content, WebView};
 
 const PATCH_LIST_FILE_NAME: &str = "plist.txt";
 
@@ -26,6 +25,7 @@ struct PendingPatch {
 }
 
 fn main() {
+    simple_logger::init().unwrap();
     // Read the JSON contents of the file as an instance of `PatcherConfiguration`.
     let config = match parse_configuration("./rpatchur.json") {
         Some(v) => v,
@@ -100,7 +100,7 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
         let resp = reqwest::blocking::get(patch_list_url).unwrap();
         if !resp.status().is_success() {
             warn!(
-                "Patch list '{}' not found on the remote server, aborting.",
+                "Patch list '{}' not found on the remote server. Aborting.",
                 PATCH_LIST_FILE_NAME
             );
             return;
@@ -120,8 +120,8 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
                 Ok(v) => v,
                 Err(_) => {
                     warn!(
-                        "Invalid file name given in '{}': '{}', aborting.",
-                        PATCH_LIST_FILE_NAME, patch.file_name
+                        "Invalid file name '{}' given in '{}'. Aborting.",
+                        patch.file_name, PATCH_LIST_FILE_NAME
                     );
                     return;
                 }
@@ -130,15 +130,18 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
             let mut resp = reqwest::blocking::get(patch_file_url).unwrap();
             if !resp.status().is_success() {
                 warn!(
-                    "Patch file '{}' not found on the remote server, aborting.",
+                    "Patch file '{}' not found on the remote server. Aborting.",
                     patch.file_name
                 );
                 return;
             }
             let _bytes_copied = match resp.copy_to(&mut tmp_file) {
                 Ok(v) => v,
-                Err(_) => {
-                    warn!("Failed to download file '{}', aborting.", patch.file_name);
+                Err(e) => {
+                    warn!(
+                        "Failed to download file '{}': {}. Aborting.",
+                        patch.file_name, e
+                    );
                     return;
                 }
             };
@@ -151,25 +154,59 @@ fn spawn_patching_thread(config: PatcherConfiguration) -> thread::JoinHandle<()>
         }
         info!("Done");
         // Proceed with actual patching
+        let current_working_dir = match std::env::current_dir() {
+            Ok(v) => v,
+            Err(e) => {
+                warn!(
+                    "Failed to resolve current working directory: {}. Aborting.",
+                    e
+                );
+                return;
+            }
+        };
         info!("Applying patches...");
         for pending_patch in pending_patch_queue {
             info!("Processing {}", pending_patch.info.file_name);
-            let archive = match ThorArchive::new(pending_patch.local_file) {
+            let mut thor_archive = match ThorArchive::new(pending_patch.local_file) {
                 Ok(v) => v,
-                Err(_) => {
-                    warn!("Cannot read '{}', aborting.", pending_patch.info.file_name);
+                Err(e) => {
+                    warn!(
+                        "Cannot read '{}': {}. Aborting.",
+                        pending_patch.info.file_name, e
+                    );
                     break;
                 }
             };
-            let patch_target_grf_name = archive.target_grf_name();
-            if patch_target_grf_name.is_empty() {
-                trace!("Target GRF: {:?}", config.client.default_grf_name);
-            } else {
+
+            if thor_archive.use_grf_merging() {
+                // Patch GRF file
+                let patch_target_grf_name = {
+                    if thor_archive.target_grf_name().is_empty() {
+                        config.client.default_grf_name.clone()
+                    } else {
+                        thor_archive.target_grf_name()
+                    }
+                };
                 trace!("Target GRF: {:?}", patch_target_grf_name);
-            }
-            trace!("Entries:");
-            for entry in archive.get_entries() {
-                trace!("{:?}", entry);
+                if let Err(e) = apply_patch_to_grf(
+                    current_working_dir.join(&patch_target_grf_name),
+                    &mut thor_archive,
+                ) {
+                    warn!(
+                        "Failed to patch '{}': {}. Aborting.",
+                        patch_target_grf_name, e
+                    );
+                    break;
+                }
+            } else {
+                // Patch root directory
+                if let Err(e) = apply_patch_to_disk(&current_working_dir, &mut thor_archive) {
+                    warn!(
+                        "Failed to apply patch '{}': {}. Aborting.",
+                        pending_patch.info.file_name, e
+                    );
+                    break;
+                }
             }
         }
         info!("Patching finished!");

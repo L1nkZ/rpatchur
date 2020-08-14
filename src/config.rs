@@ -1,3 +1,4 @@
+use log::error;
 use std::fs::File;
 use std::io::BufReader;
 
@@ -46,7 +47,7 @@ pub fn parse_configuration(config_file_path: &str) -> Option<PatcherConfiguratio
     let config_file = match File::open(config_file_path) {
         Ok(t) => t,
         _ => {
-            println!("Cannot open configuration file.");
+            error!("Cannot open configuration file.");
             return None;
         }
     };
@@ -54,7 +55,7 @@ pub fn parse_configuration(config_file_path: &str) -> Option<PatcherConfiguratio
     let config: PatcherConfiguration = match serde_json::from_reader(config_reader) {
         Ok(t) => t,
         _ => {
-            println!("Invalid JSON configuration.");
+            error!("Invalid JSON configuration.");
             return None;
         }
     };

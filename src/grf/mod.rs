@@ -1,3 +1,5 @@
+pub use builder::GrfArchiveBuilder;
+
 use std::borrow::Cow;
 use std::boxed::Box;
 use std::collections::HashMap;
@@ -9,6 +11,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::str;
 
+pub mod builder;
 mod crypto;
 
 use crypto::{decrypt_file_content, decrypt_file_name};
@@ -20,8 +23,9 @@ use nom::number::complete::{le_i32, le_u32, le_u8};
 use nom::IResult;
 use nom::*;
 
-const HEADER_MAGIC: &str = "Master of Magic\0";
-const GRF_HEADER_SIZE: usize = 0xF + 0x1F;
+pub const GRF_HEADER_MAGIC: &str = "Master of Magic\0";
+// Packed structs' sizes in bytes
+pub const GRF_HEADER_SIZE: usize = GRF_HEADER_MAGIC.len() + 0x1E;
 
 #[derive(Debug)]
 pub struct GrfArchive {
@@ -191,6 +195,10 @@ impl GrfArchive {
         Ok(decompressed_content)
     }
 
+    pub fn contains_file<S: AsRef<str> + Hash>(&self, file_path: S) -> bool {
+        self.container.entries.contains_key(file_path.as_ref())
+    }
+
     pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&GrfFileEntry> {
         self.container.entries.get(file_path.as_ref())
     }
@@ -201,7 +209,7 @@ impl GrfArchive {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct GrfContainer {
+struct GrfContainer {
     pub header: GrfHeader,
     pub table_info: GrfTableInfo,
     pub entries: HashMap<String, GrfFileEntry>,
@@ -218,18 +226,18 @@ pub struct GrfHeader {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum GrfTableInfo {
+enum GrfTableInfo {
     Uncompressed(GrfTableInfo1),
     Compressed(GrfTableInfo2),
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct GrfTableInfo1 {
+struct GrfTableInfo1 {
     pub table_size: usize,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct GrfTableInfo2 {
+struct GrfTableInfo2 {
     pub table_size_compressed: usize,
     pub table_size: usize,
 }
@@ -265,7 +273,7 @@ pub enum GrfFileEncryption {
 
 named!(parse_grf_header<&[u8], GrfHeader>,
     do_parse!(
-        tag!(HEADER_MAGIC)
+        tag!(GRF_HEADER_MAGIC)
             >> key: take!(14)
             >> file_table_offset: le_u32
             >> seed: le_i32
