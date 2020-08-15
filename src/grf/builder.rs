@@ -231,9 +231,10 @@ fn write_grf_header<W: Write>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::grf::*;
+    use std::collections::HashMap;
     use std::fs::File;
+
+    use crate::grf::{GrfArchive, GrfArchiveBuilder, GrfFileEntry};
     use tempfile::tempdir;
 
     #[test]

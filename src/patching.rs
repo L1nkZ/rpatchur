@@ -4,9 +4,9 @@ use std::io;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use crate::grf::builder::*;
-use crate::grf::*;
-use crate::thor::*;
+use crate::grf::builder::GrfArchiveBuilder;
+use crate::grf::GrfArchive;
+use crate::thor::{ThorArchive, ThorFileEntry};
 
 enum DataTransformation {
     None,
