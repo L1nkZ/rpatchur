@@ -28,6 +28,40 @@
 </head>
 
 <body>
+    <!-- Patcher status callbacks -->
+    <script type="text/javascript">
+        function patchingStatusReady() {
+            $("#download-progress-bar")
+                .css("width", "100%")
+                .attr("aria-valuenow", "100")
+                .removeClass("bg-warning")
+                .addClass("bg-success");
+            $("#download-progress-text").text("Ready");
+            $("#button-play").prop('disabled', false);
+        }
+
+        function patchingStatusError(errorMsg) {
+            $("#download-progress-bar")
+                .css("width", "100%")
+                .attr("aria-valuenow", "100")
+                .removeClass("bg-warning")
+                .addClass("bg-danger");
+            $("#download-progress-text").text("Failure: " + errorMsg);
+        }
+
+        function patchingStatusDownloading(nbDownloaded, nbTotal) {
+            var percentage = (100 * nbDownloaded) / nbTotal;
+            $("#download-progress-bar").css("width", percentage + "%").attr("aria-valuenow", percentage);
+            $("#download-progress-text").text("Downloading: " + nbDownloaded + "/" + nbTotal);
+        }
+
+        function patchingStatusInstalling(nbInstalled, nbTotal) {
+            var percentage = (100 * nbInstalled) / nbTotal;
+            $("#download-progress-bar").css("width", percentage + "%").attr("aria-valuenow", percentage);
+            $("#download-progress-text").text("Installing: " + nbInstalled + "/" + nbTotal);
+        }
+    </script>
+
     <!-- Top Navbar -->
     <nav class="navbar navbar-expand-md navbar-dark bg-dark">
         <div class="navbar-collapse collapse w-100 order-1 order-md-0 dual-collapse2">
@@ -57,9 +91,11 @@
             <ul class="navbar-nav ml-auto">
                 <li class="nav-item">
                     <div class="btn-group shadow-sm" role="group">
-                        <button type="button" class="btn btn-success" onclick="external.invoke('play')">Play</button>
-                        <button type="button" class="btn btn-primary" onclick="external.invoke('setup')">Setup</button>
-                        <button button type="button" class="btn btn-danger"
+                        <button type="button" class="btn btn-success" id="button-play"
+                            onclick="external.invoke('play')" disabled>Play</button>
+                        <button type="button" class="btn btn-primary" id="button-setup"
+                            onclick="external.invoke('setup')">Setup</button>
+                        <button button type="button" class="btn btn-danger" id="button-exit"
                             onclick="external.invoke('exit')">Exit</button>
                     </div>
                 </li>
@@ -67,9 +103,10 @@
         </div>
     </nav>
     <div class="progress position-relative rounded-0 shadow-sm" id="download-progress">
-        <small class="justify-content-center d-flex position-absolute w-100">43%</small>
-        <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" role="progressbar"
-            style="width: 43%;" aria-valuenow="43" aria-valuemin="0" aria-valuemax="100"></div>
+        <small class="justify-content-center d-flex position-absolute w-100"
+            id="download-progress-text">Starting...</small>
+        <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" id="download-progress-bar"
+            role="progressbar" style="width: 0%" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100"></div>
     </div>
 
     <div class="container-fluid mt-3 mb-3 noselect">
