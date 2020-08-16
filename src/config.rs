@@ -35,6 +35,7 @@ pub struct SetupConfiguration {
 #[derive(Deserialize, Clone)]
 pub struct WebConfiguration {
     pub index_url: String,
+    pub plist_url: String,
     pub patch_url: String,
 }
 

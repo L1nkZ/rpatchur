@@ -10,13 +10,11 @@ use std::process::Command;
 use std::thread;
 
 use config::{parse_configuration, PatcherConfiguration};
-use log::{info, trace, warn};
+use log::{error, info, trace, warn};
 use patching::{apply_patch_to_disk, apply_patch_to_grf};
 use thor::ThorArchive;
 use url::Url;
 use web_view::{Content, Handle, WebView};
-
-const PATCH_LIST_FILE_NAME: &str = "plist.txt";
 
 #[derive(Debug)]
 struct PendingPatch {
@@ -110,11 +108,11 @@ fn spawn_patching_thread(
     thread::spawn(move || {
         trace!("Patching thread started.");
         let report_error = |err_msg| {
-            warn!("{}", err_msg);
+            error!("{}", err_msg);
             dispatch_patching_status(&webview_handle, PatchingStatus::Error(err_msg));
         };
         let patch_url = Url::parse(config.web.patch_url.as_str()).unwrap();
-        let patch_list_url = patch_url.join(PATCH_LIST_FILE_NAME).unwrap();
+        let patch_list_url = Url::parse(config.web.plist_url.as_str()).unwrap();
         let resp = match reqwest::blocking::get(patch_list_url) {
             Ok(v) => v,
             Err(e) => {
@@ -123,10 +121,7 @@ fn spawn_patching_thread(
             }
         };
         if !resp.status().is_success() {
-            report_error(format!(
-                "Patch list '{}' not found on the remote server.",
-                PATCH_LIST_FILE_NAME
-            ));
+            report_error("Patch list file not found on the remote server.".to_string());
             return;
         }
         let patch_index_content = match resp.text() {
@@ -152,8 +147,8 @@ fn spawn_patching_thread(
                 Ok(v) => v,
                 Err(_) => {
                     report_error(format!(
-                        "Invalid file name '{}' given in '{}'.",
-                        patch.file_name, PATCH_LIST_FILE_NAME
+                        "Invalid file name '{}' given in patch list file.",
+                        patch.file_name
                     ));
                     return;
                 }
