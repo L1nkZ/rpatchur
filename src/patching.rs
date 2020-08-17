@@ -72,14 +72,10 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
         for (relative_path, entry) in merge_entries {
             match entry.source_id {
                 0 => {
-                    // TODO: RAW file content copy
-                    let data = grf_archive.read_file_content(&relative_path)?;
-                    builder.append_file(relative_path, data.as_slice())?;
+                    builder.import_raw_entry_from_grf(&mut grf_archive, relative_path)?;
                 }
                 1 => {
-                    // TODO: RAW file content copy
-                    let data = thor_archive.read_file_content(&relative_path)?;
-                    builder.append_file(relative_path, data.as_slice())?;
+                    builder.import_raw_entry_from_thor(thor_archive, relative_path)?;
                 }
                 _ => {}
             }
@@ -163,6 +159,7 @@ mod tests {
     fn test_apply_patch_to_grf() {
         let grf_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/grf");
         let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        // Empty GRF
         {
             let temp_dir = tempdir().unwrap();
 

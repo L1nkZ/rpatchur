@@ -81,10 +81,10 @@ impl GrfArchive {
                 let mut decompressed_table = vec![];
                 let _decompressed_size = match decoder.read_to_end(&mut decompressed_table) {
                     Ok(v) => v,
-                    Err(_) => {
+                    Err(e) => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
-                            "Failed to decompress file table",
+                            format!("Failed to decompress file table: {}", e),
                         ))
                     }
                 };
@@ -168,6 +168,21 @@ impl GrfArchive {
 
     pub fn version_minor(&self) -> u32 {
         self.container.header.version_minor
+    }
+
+    pub fn get_entry_raw_data<S: AsRef<str> + Hash>(
+        &mut self,
+        file_path: S,
+    ) -> io::Result<Vec<u8>> {
+        let file_entry = match self.get_file_entry(file_path) {
+            Some(v) => v.clone(),
+            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
+        };
+        self.obj.seek(SeekFrom::Start(file_entry.offset))?;
+        let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed_aligned);
+        let mut file_chunk = self.obj.by_ref().take(content.capacity() as u64);
+        file_chunk.read_to_end(&mut content)?;
+        Ok(content)
     }
 
     pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> io::Result<Vec<u8>> {
@@ -463,7 +478,7 @@ mod tests {
         .cloned()
         .collect();
         let check_small_grf_entries = |grf: &mut GrfArchive| {
-            let file_entries: Vec<GrfFileEntry> = grf.get_entries().map(|e| e.clone()).collect();
+            let file_entries: Vec<GrfFileEntry> = grf.get_entries().cloned().collect();
             for file_entry in file_entries {
                 let file_path: &str = &file_entry.relative_path[..];
                 assert!(expected_content.contains_key(file_path));

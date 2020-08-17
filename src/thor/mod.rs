@@ -123,16 +123,32 @@ impl<R: Read + Seek> ThorArchive<R> {
         self.container.header.target_grf_name.clone()
     }
 
+    pub fn get_entry_raw_data<S: AsRef<str> + Hash>(
+        &mut self,
+        file_path: S,
+    ) -> io::Result<Vec<u8>> {
+        let file_entry = match self.get_file_entry(file_path) {
+            Some(v) => v.clone(),
+            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
+        };
+        self.obj.seek(SeekFrom::Start(file_entry.offset))?;
+        let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
+        let mut file_chunk = self.obj.by_ref().take(content.capacity() as u64);
+        file_chunk.read_to_end(&mut content)?;
+        Ok(content)
+    }
+
     pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> io::Result<Vec<u8>> {
         let file_entry = match self.get_file_entry(file_path) {
             Some(v) => v.clone(),
             None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
         self.obj.seek(SeekFrom::Start(file_entry.offset))?;
-        let mut content: Vec<u8> = vec![0; file_entry.size_compressed];
-        self.obj.read_exact(content.as_mut_slice())?;
-        // Decompress the table with zlib
-        let mut decoder = ZlibDecoder::new(&content[..]);
+        let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
+        let mut file_chunk = self.obj.by_ref().take(content.capacity() as u64);
+        file_chunk.read_to_end(&mut content)?;
+        // Decompress the content with zlib
+        let mut decoder = ZlibDecoder::new(content.as_slice());
         let mut decompressed_content = Vec::new();
         let decompressed_size = decoder.read_to_end(&mut decompressed_content)?;
         if decompressed_size != file_entry.size {

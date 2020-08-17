@@ -2,7 +2,8 @@ use std::convert::TryFrom;
 use std::io;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
-use crate::grf::{GRF_HEADER_MAGIC, GRF_HEADER_SIZE};
+use crate::grf::{GrfArchive, GRF_HEADER_MAGIC, GRF_HEADER_SIZE};
+use crate::thor::ThorArchive;
 use encoding::label::encoding_from_whatwg_label;
 use encoding::EncoderTrap;
 use flate2::write::ZlibEncoder;
@@ -80,6 +81,63 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
             version_minor,
             entries: Vec::new(),
         })
+    }
+
+    pub fn import_raw_entry_from_grf(
+        &mut self,
+        archive: &mut GrfArchive,
+        relative_path: String,
+    ) -> io::Result<()> {
+        match &mut self.obj {
+            None => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Inner object was already closed",
+            )),
+            Some(w) => {
+                let entry = match archive.get_file_entry(&relative_path) {
+                    None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
+                    Some(v) => v.clone(),
+                };
+                let content = archive.get_entry_raw_data(&relative_path)?;
+                let mut content_reader = Cursor::new(content);
+                let content_size = io::copy(&mut content_reader, w.by_ref())?;
+                debug_assert_eq!(entry.size_compressed_aligned as u64, content_size);
+                self.entries.push(GenericFileEntry {
+                    relative_path,
+                    size: entry.size as u32,
+                    size_compressed: entry.size_compressed_aligned as u32,
+                });
+                Ok(())
+            }
+        }
+    }
+
+    pub fn import_raw_entry_from_thor<R: Read + Seek>(
+        &mut self,
+        archive: &mut ThorArchive<R>,
+        relative_path: String,
+    ) -> io::Result<()> {
+        match &mut self.obj {
+            None => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Inner object was already closed",
+            )),
+            Some(w) => {
+                let entry = match archive.get_file_entry(&relative_path) {
+                    None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
+                    Some(v) => v.clone(),
+                };
+                let content = archive.get_entry_raw_data(&relative_path)?;
+                let mut content_reader = Cursor::new(content);
+                let _ = io::copy(&mut content_reader, w.by_ref())?;
+                self.entries.push(GenericFileEntry {
+                    relative_path,
+                    size: entry.size as u32,
+                    size_compressed: entry.size_compressed as u32,
+                });
+                Ok(())
+            }
+        }
     }
 
     pub fn append_file<R: Read>(&mut self, relative_path: String, mut data: R) -> io::Result<()> {
@@ -233,12 +291,13 @@ fn write_grf_header<W: Write>(
 mod tests {
     use std::collections::HashMap;
     use std::fs::File;
+    use std::path::PathBuf;
 
     use crate::grf::{GrfArchive, GrfArchiveBuilder, GrfFileEntry};
     use tempfile::tempdir;
 
     #[test]
-    fn test_grf_archive_builder() {
+    fn test_append_file() {
         let temp_dir = tempdir().unwrap();
         let output_path = temp_dir.path().join("200-builder.grf");
         let test_content: HashMap<&str, Vec<u8>> = [
@@ -248,6 +307,7 @@ mod tests {
         .iter()
         .cloned()
         .collect();
+        // Generate
         {
             let output_file = File::create(&output_path).unwrap();
             let mut builder = GrfArchiveBuilder::new(output_file, 2, 0).unwrap();
@@ -259,20 +319,60 @@ mod tests {
             // Call finish manually, even though builder will be dropped on scope exit
             builder.finish().unwrap();
         }
+        // Check result
+        {
+            let mut grf_archive = GrfArchive::open(&output_path).unwrap();
+            let file_entries: Vec<GrfFileEntry> = grf_archive.get_entries().cloned().collect();
+            for entry in file_entries {
+                let file_path: &str = entry.relative_path.as_str();
+                assert!(test_content.contains_key(file_path));
+                let expected_content = &test_content[file_path];
+                // Size check
+                assert_eq!(expected_content.len(), entry.size);
+                // Content check
+                assert_eq!(
+                    expected_content,
+                    &grf_archive.read_file_content(file_path).unwrap()
+                );
+            }
+        }
+    }
 
-        let mut grf_archive = GrfArchive::open(&output_path).unwrap();
-        let file_entries: Vec<GrfFileEntry> = grf_archive.get_entries().cloned().collect();
-        for entry in file_entries {
-            let file_path: &str = entry.relative_path.as_str();
-            assert!(test_content.contains_key(file_path));
-            let expected_content = &test_content[file_path];
-            // Size check
-            assert_eq!(expected_content.len(), entry.size);
-            // Content check
-            assert_eq!(
-                expected_content,
-                &grf_archive.read_file_content(file_path).unwrap()
-            );
+    #[test]
+    fn test_import_raw_entry_from_grf() {
+        let grf_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/grf");
+        let grf_path = grf_dir_path.join("200-small.grf");
+        let temp_dir = tempdir().unwrap();
+        let output_path = temp_dir.path().join("200-builder.grf");
+        // Generate
+        {
+            let mut grf = GrfArchive::open(&grf_path).unwrap();
+            let output_file = File::create(&output_path).unwrap();
+            let mut builder = GrfArchiveBuilder::new(output_file, 2, 0).unwrap();
+            let grf_entries: Vec<GrfFileEntry> = grf.get_entries().cloned().collect();
+            for entry in grf_entries {
+                builder
+                    .import_raw_entry_from_grf(&mut grf, entry.relative_path)
+                    .unwrap();
+            }
+        }
+        // Check result
+        {
+            let mut grf = GrfArchive::open(&grf_path).unwrap();
+            let mut ouput_archive = GrfArchive::open(&output_path).unwrap();
+            let file_entries: Vec<GrfFileEntry> = ouput_archive.get_entries().cloned().collect();
+            for entry in file_entries {
+                let expected_content = grf.read_file_content(&entry.relative_path).unwrap();
+                // Size check
+                assert_eq!(expected_content.len(), entry.size);
+                // Content check
+                assert_eq!(
+                    expected_content,
+                    ouput_archive
+                        .read_file_content(&entry.relative_path)
+                        .unwrap()
+                );
+            }
         }
     }
 }
