@@ -21,6 +21,7 @@ use nom::*;
 pub const GRF_HEADER_MAGIC: &str = "Master of Magic\0";
 // Packed structs' sizes in bytes
 pub const GRF_HEADER_SIZE: usize = GRF_HEADER_MAGIC.len() + 0x1E;
+const GRF_TABLE_INFO2_SIZE: usize = 2 * std::mem::size_of::<u32>();
 
 #[derive(Debug)]
 pub struct GrfArchive {
@@ -32,32 +33,35 @@ impl GrfArchive {
     /// Create a new archive with the underlying object as the reader.
     pub fn open(grf_path: &Path) -> io::Result<GrfArchive> {
         let mut file = File::open(grf_path)?;
-        // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
-        let mut buf = vec![];
-        let _bytes_read = file.read_to_end(&mut buf)?;
-        let (parser_output, grf_header) = match parse_grf_header(buf.as_slice()) {
+        let mut grf_header_buf = [0; GRF_HEADER_SIZE];
+        file.read_exact(&mut grf_header_buf)?;
+        let (parser_output, grf_header) = match parse_grf_header(&grf_header_buf) {
             IResult::Ok(v) => v,
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "Failed to parse archive",
+                    "Failed to parse archive (header)",
                 ))
             }
         };
 
         match grf_header.version_major {
             2 => {
-                let (parser_output, grf_table_info) = match parse_grf_table_info_200(
-                    &parser_output[grf_header.file_table_offset as usize..],
-                ) {
-                    IResult::Ok(v) => v,
-                    _ => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Failed to parse archive",
-                        ))
-                    }
-                };
+                let mut table_info_buf = [0; GRF_TABLE_INFO2_SIZE];
+                file.seek(SeekFrom::Start(
+                    GRF_HEADER_SIZE as u64 + grf_header.file_table_offset,
+                ))?;
+                file.read_exact(&mut table_info_buf)?;
+                let (_parser_output, grf_table_info) =
+                    match parse_grf_table_info_200(&table_info_buf) {
+                        IResult::Ok(v) => v,
+                        _ => {
+                            return Err(io::Error::new(
+                                io::ErrorKind::InvalidData,
+                                "Failed to parse archive (table info)",
+                            ))
+                        }
+                    };
                 if grf_table_info.table_size_compressed == 0 || grf_table_info.table_size == 0 {
                     return Ok(GrfArchive {
                         obj: Box::new(file),
@@ -69,8 +73,11 @@ impl GrfArchive {
                     });
                 }
                 // Decompress the table with zlib
-                let mut decoder =
-                    ZlibDecoder::new(&parser_output[..grf_table_info.table_size_compressed]);
+                let mut compressed_table: Vec<u8> =
+                    Vec::with_capacity(grf_table_info.table_size_compressed);
+                let mut file_chunk = file.by_ref().take(compressed_table.capacity() as u64);
+                file_chunk.read_to_end(&mut compressed_table)?;
+                let mut decoder = ZlibDecoder::new(compressed_table.as_slice());
                 let mut decompressed_table = vec![];
                 let _decompressed_size = match decoder.read_to_end(&mut decompressed_table) {
                     Ok(v) => v,
@@ -169,8 +176,9 @@ impl GrfArchive {
             None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
         self.obj.seek(SeekFrom::Start(file_entry.offset))?;
-        let mut content: Vec<u8> = vec![0; file_entry.size_compressed_aligned];
-        self.obj.read_exact(content.as_mut_slice())?;
+        let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed_aligned);
+        let mut file_chunk = self.obj.by_ref().take(content.capacity() as u64);
+        file_chunk.read_to_end(&mut content)?;
         match file_entry.encryption {
             GrfFileEncryption::Unencrypted => {}
             GrfFileEncryption::Encrypted(cycle) => {
