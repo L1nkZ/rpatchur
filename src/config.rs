@@ -1,7 +1,8 @@
-use log::error;
 use std::fs::File;
 use std::io::BufReader;
+use std::path::Path;
 
+use log::error;
 use serde::Deserialize;
 
 #[derive(Deserialize, Clone)]
@@ -44,7 +45,7 @@ pub struct ClientConfiguration {
     pub default_grf_name: String,
 }
 
-pub fn parse_configuration(config_file_path: &str) -> Option<PatcherConfiguration> {
+pub fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> Option<PatcherConfiguration> {
     let config_file = match File::open(config_file_path) {
         Ok(t) => t,
         _ => {

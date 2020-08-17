@@ -3,15 +3,21 @@ mod grf;
 mod patching;
 mod thor;
 
+use std::env;
+use std::ffi::OsString;
+use std::fs;
 use std::fs::File;
+use std::io;
 use std::io::prelude::*;
 use std::io::SeekFrom;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::thread;
 
 use config::{parse_configuration, PatcherConfiguration};
 use log::{error, info, trace, warn};
 use patching::{apply_patch_to_disk, apply_patch_to_grf};
+use serde::{Deserialize, Serialize};
 use thor::ThorArchive;
 use url::Url;
 use web_view::{Content, Handle, WebView};
@@ -29,10 +35,17 @@ enum PatchingStatus {
     InstallationInProgress(usize, usize), // Installed, Total
 }
 
+#[derive(Serialize, Deserialize)]
+struct PatcherCache {
+    pub last_patch_index: usize,
+}
+
 fn main() {
     simple_logger::init().unwrap();
+    let patcher_name = get_patcher_name().unwrap();
+    let configuration_file_name = PathBuf::from(patcher_name).with_extension("json");
     // Read the JSON contents of the file as an instance of `PatcherConfiguration`.
-    let config = match parse_configuration("./rpatchur.json") {
+    let config = match parse_configuration(configuration_file_name) {
         Some(v) => v,
         None => return,
     };
@@ -60,6 +73,16 @@ fn main() {
 
     webview.run().unwrap();
     patching_thread.join().unwrap();
+}
+
+fn get_patcher_name() -> Option<OsString> {
+    match env::current_exe() {
+        Err(_) => None,
+        Ok(v) => match v.file_stem() {
+            Some(v) => Some(v.to_os_string()),
+            None => None,
+        },
+    }
 }
 
 /// Opens the configured client with arguments, if needed
@@ -98,7 +121,12 @@ fn handle_cancel_update(_webview: &mut WebView<PatcherConfiguration>) {
 
 /// Resets the cache used to keep track of already applied patches
 fn handle_reset_cache(_webview: &mut WebView<PatcherConfiguration>) {
-    warn!("FIXME: reset_cache");
+    if let Some(patcher_name) = get_patcher_name() {
+        let cache_file_path = PathBuf::from(patcher_name).with_extension("dat");
+        if let Err(e) = fs::remove_file(cache_file_path) {
+            warn!("Failed to remove the cache file: {}", e);
+        }
+    }
 }
 
 fn spawn_patching_thread(
@@ -129,8 +157,28 @@ fn spawn_patching_thread(
             Err(_) => return,
         };
         info!("Parsing patch index...");
-        let patch_list = thor::patch_list_from_string(patch_index_content.as_str());
+        let mut patch_list = thor::patch_list_from_string(patch_index_content.as_str());
         info!("Successfully fetched patch list: {:?}", patch_list);
+
+        // Try to read cache
+        let cache_file_path = match get_patcher_name() {
+            Some(patcher_name) => PathBuf::from(patcher_name).with_extension("dat"),
+            None => {
+                report_error("Failed to resolve patcher name.".to_string());
+                return;
+            }
+        };
+        if let Ok(patcher_cache) = read_cache_file(&cache_file_path) {
+            // Ignore already applied patches if needed
+            // First we verify that our cached index looks relevant
+            let should_filter_patch_list = patch_list
+                .iter()
+                .find(|&x| x.index == patcher_cache.last_patch_index)
+                .is_some();
+            if should_filter_patch_list {
+                patch_list.retain(|x| x.index > patcher_cache.last_patch_index);
+            }
+        };
 
         // Try fetching patch files
         info!("Downloading patches... ");
@@ -181,7 +229,7 @@ fn spawn_patching_thread(
         }
         info!("Done");
         // Proceed with actual patching
-        let current_working_dir = match std::env::current_dir() {
+        let current_working_dir = match env::current_dir() {
             Ok(v) => v,
             Err(e) => {
                 report_error(format!(
@@ -242,6 +290,15 @@ fn spawn_patching_thread(
                     return;
                 }
             }
+            // Update the cache file with the last successful patch's index
+            if let Err(e) = write_cache_file(
+                &cache_file_path,
+                PatcherCache {
+                    last_patch_index: pending_patch.info.index,
+                },
+            ) {
+                warn!("Failed to write cache file: {}.", e);
+            }
         }
         dispatch_patching_status(&webview_handle, PatchingStatus::Ready);
         info!("Patching finished!");
@@ -269,5 +326,27 @@ fn dispatch_patching_status(webview_handle: &Handle<PatcherConfiguration>, statu
         Ok(())
     }) {
         warn!("Failed to dispatch patching status: {}.", e);
+    }
+}
+
+fn read_cache_file<P: AsRef<Path>>(cache_file_path: P) -> io::Result<PatcherCache> {
+    let file = File::open(cache_file_path)?;
+    match bincode::deserialize_from(file) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to deserialize patcher cache: {}", e),
+        )),
+    }
+}
+
+fn write_cache_file<P: AsRef<Path>>(cache_file_path: P, new_cache: PatcherCache) -> io::Result<()> {
+    let file = File::create(cache_file_path)?;
+    match bincode::serialize_into(file, &new_cache) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Failed to serialize patcher cache: {}", e),
+        )),
     }
 }
