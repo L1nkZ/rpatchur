@@ -24,10 +24,13 @@ type ThorPatchList = Vec<ThorPatchInfo>;
 /// Parses Thor's plist.txt file
 pub fn patch_list_from_string(content: &str) -> ThorPatchList {
     let vec_lines: Vec<&str> = content.lines().collect();
-    vec_lines
+    let mut sorted_patch_list: ThorPatchList = vec_lines
         .into_iter()
         .filter_map(|elem| ThorPatchInfo::from_string(&elem))
-        .collect()
+        .collect();
+    // Sort patch list by index
+    sorted_patch_list.sort_by(|a, b| a.index.cmp(&b.index));
+    sorted_patch_list
 }
 
 #[derive(Debug)]
@@ -438,10 +441,12 @@ mod tests {
 870 iteminfo_20170423_.thor
 871 sprites_20170427.thor
 872 sprites_20170429.thor
+623 2016-01_01.thor
 //873 rodex_20170501.thor
 //874 strings_20170501.thor
 875 rodex_20170501_.thor";
         let expected_content: HashMap<usize, &str> = [
+            (623, "2016-01_01.thor"),
             (870, "iteminfo_20170423_.thor"),
             (871, "sprites_20170427.thor"),
             (872, "sprites_20170429.thor"),
@@ -453,6 +458,7 @@ mod tests {
         //Empty patch list
         let empty_thor_patch_list = patch_list_from_string("");
         assert_eq!(empty_thor_patch_list.len(), 0);
+        // TODO(LinkZ): Ensure patch list is ordered by patch index
         // Regular patch list
         let thor_patch_list = patch_list_from_string(plist_content);
         assert_eq!(thor_patch_list.len(), expected_content.len());
