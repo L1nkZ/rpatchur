@@ -89,12 +89,22 @@ fn get_patcher_name() -> Option<OsString> {
 
 /// Opens the configured client with arguments, if needed
 fn handle_play(webview: &mut WebView<PatcherConfiguration>) {
-    let client_path: &String = &webview.user_data().play.path;
+    let client_exe: &String = &webview.user_data().play.path;
     let client_argument: &String = &webview.user_data().play.argument;
-    match Command::new(client_path).arg(client_argument).spawn() {
-        Ok(child) => trace!("Client started: pid={}", child.id()),
-        Err(e) => {
-            warn!("Failed to start client: {}", e);
+    if cfg!(target_os = "windows") {
+        #[cfg(windows)]
+        match windows::spawn_elevated_win32_process(client_exe, client_argument) {
+            Ok(_) => trace!("Client started."),
+            Err(e) => {
+                warn!("Failed to start client: {}", e);
+            }
+        }
+    } else {
+        match Command::new(client_exe).arg(client_argument).spawn() {
+            Ok(child) => trace!("Client started: pid={}", child.id()),
+            Err(e) => {
+                warn!("Failed to start client: {}", e);
+            }
         }
     }
 }
@@ -103,10 +113,20 @@ fn handle_play(webview: &mut WebView<PatcherConfiguration>) {
 fn handle_setup(webview: &mut WebView<PatcherConfiguration>) {
     let setup_exe: &String = &webview.user_data().setup.path;
     let setup_argument: &String = &webview.user_data().play.argument;
-    match Command::new(setup_exe).arg(setup_argument).spawn() {
-        Ok(child) => trace!("Setup software started: pid={}", child.id()),
-        Err(e) => {
-            warn!("Failed to start setup software: {}", e);
+    if cfg!(target_os = "windows") {
+        #[cfg(windows)]
+        match windows::spawn_elevated_win32_process(setup_exe, setup_argument) {
+            Ok(_) => trace!("Setup software started."),
+            Err(e) => {
+                warn!("Failed to start setup software: {}", e);
+            }
+        }
+    } else {
+        match Command::new(setup_exe).arg(setup_argument).spawn() {
+            Ok(child) => trace!("Setup software started: pid={}", child.id()),
+            Err(e) => {
+                warn!("Failed to start setup software: {}", e);
+            }
         }
     }
 }
@@ -350,5 +370,67 @@ fn write_cache_file<P: AsRef<Path>>(cache_file_path: P, new_cache: PatcherCache)
             io::ErrorKind::InvalidData,
             format!("Failed to serialize patcher cache: {}", e),
         )),
+    }
+}
+
+// Taken from the rustup project
+#[cfg(windows)]
+mod windows {
+    use std::ffi::OsStr;
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+
+    fn to_u16s<S: AsRef<OsStr>>(s: S) -> io::Result<Vec<u16>> {
+        fn inner(s: &OsStr) -> io::Result<Vec<u16>> {
+            let mut maybe_result: Vec<u16> = s.encode_wide().collect();
+            if maybe_result.iter().any(|&u| u == 0) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "strings passed to WinAPI cannot contain NULs",
+                ));
+            }
+            maybe_result.push(0);
+            Ok(maybe_result)
+        }
+        inner(s.as_ref())
+    }
+
+    // This function is required to start processes that require elevation from
+    // a non-elevated process
+    pub fn spawn_elevated_win32_process<S: AsRef<OsStr>>(
+        path: S,
+        parameter: S,
+    ) -> io::Result<bool> {
+        use std::ptr;
+        use winapi::ctypes::c_int;
+        use winapi::shared::minwindef::HINSTANCE;
+        use winapi::shared::ntdef::LPCWSTR;
+        use winapi::shared::windef::HWND;
+        extern "system" {
+            pub fn ShellExecuteW(
+                hwnd: HWND,
+                lpOperation: LPCWSTR,
+                lpFile: LPCWSTR,
+                lpParameters: LPCWSTR,
+                lpDirectory: LPCWSTR,
+                nShowCmd: c_int,
+            ) -> HINSTANCE;
+        }
+        const SW_SHOW: c_int = 5;
+
+        let path = to_u16s(path)?;
+        let parameter = to_u16s(parameter)?;
+        let operation = to_u16s("runas")?;
+        let result = unsafe {
+            ShellExecuteW(
+                ptr::null_mut(),
+                operation.as_ptr(),
+                path.as_ptr(),
+                parameter.as_ptr(),
+                ptr::null(),
+                SW_SHOW,
+            )
+        };
+        Ok(result as usize > 32)
     }
 }

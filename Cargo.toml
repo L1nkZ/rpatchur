@@ -21,6 +21,8 @@ log = { version = "0.4", features = ["release_max_level_off"] }
 simple_logger = "1.6"
 crc = "1.8"
 bincode = "1.2"
+[target.'cfg(windows)'.dependencies]
+winapi = "0.3"
 
 [dev-dependencies]
 twox-hash = "1.5"

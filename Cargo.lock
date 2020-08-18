@@ -1038,6 +1038,7 @@ dependencies = [
  "url",
  "walkdir",
  "web-view",
+ "winapi 0.3.9",
 ]
 
 [[package]]

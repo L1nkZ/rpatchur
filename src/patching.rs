@@ -74,10 +74,9 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
                 0 => {
                     builder.import_raw_entry_from_grf(&mut grf_archive, relative_path)?;
                 }
-                1 => {
+                _ => {
                     builder.import_raw_entry_from_thor(thor_archive, relative_path)?;
                 }
-                _ => {}
             }
         }
     }
