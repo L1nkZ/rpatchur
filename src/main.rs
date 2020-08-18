@@ -205,14 +205,13 @@ fn spawn_patching_thread(
         // Try fetching patch files
         info!("Downloading patches... ");
         let patch_count = patch_list.len();
-        let mut patch_number: usize = 1;
+        let mut patch_number: usize = 0;
         let mut pending_patch_queue: Vec<PendingPatch> = vec![];
+        dispatch_patching_status(
+            &webview_handle,
+            PatchingStatus::DownloadInProgress(patch_number, patch_count),
+        );
         for patch in patch_list {
-            dispatch_patching_status(
-                &webview_handle,
-                PatchingStatus::DownloadInProgress(patch_number, patch_count),
-            );
-            patch_number += 1;
             let patch_file_url = match patch_url.join(patch.file_name.as_str()) {
                 Ok(v) => v,
                 Err(_) => {
@@ -248,6 +247,12 @@ fn spawn_patching_thread(
                 info: patch,
                 local_file: tmp_file,
             });
+            // Update status
+            patch_number += 1;
+            dispatch_patching_status(
+                &webview_handle,
+                PatchingStatus::DownloadInProgress(patch_number, patch_count),
+            );
         }
         info!("Done");
         // Proceed with actual patching
@@ -263,14 +268,13 @@ fn spawn_patching_thread(
         };
         info!("Applying patches...");
         let patch_count = pending_patch_queue.len();
-        let mut patch_number: usize = 1;
+        let mut patch_number: usize = 0;
+        dispatch_patching_status(
+            &webview_handle,
+            PatchingStatus::InstallationInProgress(patch_number, patch_count),
+        );
         for pending_patch in pending_patch_queue {
             info!("Processing {}", pending_patch.info.file_name);
-            dispatch_patching_status(
-                &webview_handle,
-                PatchingStatus::InstallationInProgress(patch_number, patch_count),
-            );
-            patch_number += 1;
             let mut thor_archive = match ThorArchive::new(pending_patch.local_file) {
                 Ok(v) => v,
                 Err(e) => {
@@ -321,6 +325,12 @@ fn spawn_patching_thread(
             ) {
                 warn!("Failed to write cache file: {}.", e);
             }
+            // Update status
+            patch_number += 1;
+            dispatch_patching_status(
+                &webview_handle,
+                PatchingStatus::InstallationInProgress(patch_number, patch_count),
+            );
         }
         dispatch_patching_status(&webview_handle, PatchingStatus::Ready);
         info!("Patching finished!");
