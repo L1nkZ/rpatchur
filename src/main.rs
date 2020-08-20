@@ -18,7 +18,7 @@ use std::thread;
 
 use config::{parse_configuration, PatcherConfiguration};
 use log::{error, info, trace, warn};
-use patching::{apply_patch_to_disk, apply_patch_to_grf};
+use patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use serde::{Deserialize, Serialize};
 use thor::ThorArchive;
 use url::Url;
@@ -297,6 +297,7 @@ fn spawn_patching_thread(
                 };
                 trace!("Target GRF: {:?}", patch_target_grf_name);
                 if let Err(e) = apply_patch_to_grf(
+                    GrfPatchingMethod::InPlace,
                     current_working_dir.join(&patch_target_grf_name),
                     &mut thor_archive,
                 ) {

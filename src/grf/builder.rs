@@ -1,7 +1,12 @@
+use std::collections::HashMap;
 use std::convert::TryFrom;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::path::Path;
 
+use crate::grf::dyn_alloc;
+use crate::grf::dyn_alloc::AvailableChunkList;
 use crate::grf::{GrfArchive, GRF_HEADER_MAGIC, GRF_HEADER_SIZE};
 use crate::thor::ThorArchive;
 use encoding::label::encoding_from_whatwg_label;
@@ -18,11 +23,12 @@ pub struct GrfArchiveBuilder<W: Write + Seek> {
     finished: bool,
     version_major: u32,
     version_minor: u32,
-    entries: Vec<GenericFileEntry>,
+    entries: HashMap<String, GenericFileEntry>,
+    chunks: AvailableChunkList,
 }
 
 struct GenericFileEntry {
-    pub relative_path: String,
+    pub offset: u64,
     // Note(LinkZ): u32 limited by the GRF file format
     pub size: u32,
     pub size_compressed: u32,
@@ -65,21 +71,18 @@ where
 }
 
 impl<W: Write + Seek> GrfArchiveBuilder<W> {
-    pub fn new(
-        mut obj: W,
-        version_major: u32,
-        version_minor: u32,
-    ) -> io::Result<GrfArchiveBuilder<W>> {
+    pub fn create(mut obj: W, version_major: u32, version_minor: u32) -> io::Result<Self> {
         let start_offset = obj.seek(io::SeekFrom::Current(0)).unwrap_or(0);
         // Placeholder for the GRF header
         obj.write_all(&[0; GRF_HEADER_SIZE])?;
-        Ok(GrfArchiveBuilder {
+        Ok(Self {
             obj: Some(obj),
             start_offset,
             finished: false,
             version_major,
             version_minor,
-            entries: Vec::new(),
+            entries: HashMap::new(),
+            chunks: AvailableChunkList::new(),
         })
     }
 
@@ -99,22 +102,45 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
                     Some(v) => v.clone(),
                 };
                 let content = archive.get_entry_raw_data(&relative_path)?;
-                let mut content_reader = Cursor::new(content);
-                let content_size = io::copy(&mut content_reader, w.by_ref())?;
-                debug_assert_eq!(entry.size_compressed_aligned as u64, content_size);
-                self.entries.push(GenericFileEntry {
-                    relative_path,
-                    size: entry.size as u32,
-                    size_compressed: entry.size_compressed_aligned as u32,
-                });
-                Ok(())
+                let offset = {
+                    if let Some(grf_entry) = self.entries.get(&relative_path) {
+                        self.chunks.realloc_chunk(
+                            grf_entry.offset,
+                            grf_entry.size_compressed as usize,
+                            content.len(),
+                        )
+                    } else {
+                        self.chunks.alloc_chunk(content.len())
+                    }
+                };
+                match offset {
+                    None => Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "No chunks available",
+                    )),
+                    Some(offset) => {
+                        w.seek(SeekFrom::Start(self.start_offset + offset))?;
+                        let mut content_reader = Cursor::new(content);
+                        let content_size = io::copy(&mut content_reader, w.by_ref())?;
+                        debug_assert_eq!(entry.size_compressed_aligned as u64, content_size);
+                        self.entries.insert(
+                            relative_path,
+                            GenericFileEntry {
+                                offset,
+                                size: entry.size as u32,
+                                size_compressed: entry.size_compressed_aligned as u32,
+                            },
+                        );
+                        Ok(())
+                    }
+                }
             }
         }
     }
 
     pub fn import_raw_entry_from_thor<R: Read + Seek>(
         &mut self,
-        archive: &mut ThorArchive<R>,
+        thor_archive: &mut ThorArchive<R>,
         relative_path: String,
     ) -> io::Result<()> {
         match &mut self.obj {
@@ -123,25 +149,52 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
                 "Inner object was already closed",
             )),
             Some(w) => {
-                let entry = match archive.get_file_entry(&relative_path) {
+                let entry = match thor_archive.get_file_entry(&relative_path) {
                     None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
                     Some(v) => v.clone(),
                 };
-                let content = archive.get_entry_raw_data(&relative_path)?;
-                let mut content_reader = Cursor::new(content);
-                let _ = io::copy(&mut content_reader, w.by_ref())?;
-                self.entries.push(GenericFileEntry {
-                    relative_path,
-                    size: entry.size as u32,
-                    size_compressed: entry.size_compressed as u32,
-                });
-                Ok(())
+                let content = thor_archive.get_entry_raw_data(&relative_path)?;
+                let offset = {
+                    if let Some(grf_entry) = self.entries.get(&relative_path) {
+                        self.chunks.realloc_chunk(
+                            grf_entry.offset,
+                            grf_entry.size_compressed as usize,
+                            content.len(),
+                        )
+                    } else {
+                        self.chunks.alloc_chunk(content.len())
+                    }
+                };
+                match offset {
+                    None => Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "No chunks available",
+                    )),
+                    Some(offset) => {
+                        w.seek(SeekFrom::Start(self.start_offset + offset))?;
+                        let mut content_reader = Cursor::new(content);
+                        let _ = io::copy(&mut content_reader, w.by_ref())?;
+                        self.entries.insert(
+                            relative_path,
+                            GenericFileEntry {
+                                offset,
+                                size: entry.size as u32,
+                                size_compressed: entry.size_compressed as u32,
+                            },
+                        );
+                        Ok(())
+                    }
+                }
             }
         }
     }
 
-    pub fn append_file<R: Read>(&mut self, relative_path: String, mut data: R) -> io::Result<()> {
+    pub fn add_file<R: Read>(&mut self, relative_path: String, mut data: R) -> io::Result<()> {
         match &mut self.obj {
+            None => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Inner object was already closed",
+            )),
             Some(w) => {
                 // Compress it
                 let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
@@ -153,20 +206,51 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
                     }
                 };
                 // Write compressed data
-                let mut compressed_reader = Cursor::new(encoder.finish()?);
-                let compressed_data_size = io::copy(&mut compressed_reader, w.by_ref())?;
-                let compressed_data_size_u32 = u32::try_from(compressed_data_size).unwrap();
-                self.entries.push(GenericFileEntry {
-                    relative_path,
-                    size: data_size_u32,
-                    size_compressed: compressed_data_size_u32,
-                });
-                Ok(())
+                let compressed_data = encoder.finish()?;
+                let compressed_data_size = compressed_data.len();
+                let offset = {
+                    if let Some(grf_entry) = self.entries.get(&relative_path) {
+                        self.chunks.realloc_chunk(
+                            grf_entry.offset,
+                            grf_entry.size_compressed as usize,
+                            compressed_data_size,
+                        )
+                    } else {
+                        self.chunks.alloc_chunk(compressed_data_size)
+                    }
+                };
+                match offset {
+                    None => Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "No chunks available",
+                    )),
+                    Some(offset) => {
+                        w.seek(SeekFrom::Start(self.start_offset + offset))?;
+                        let mut compressed_reader = Cursor::new(compressed_data);
+                        let _ = io::copy(&mut compressed_reader, w.by_ref())?;
+                        let compressed_data_size_u32 = u32::try_from(compressed_data_size).unwrap();
+                        self.entries.insert(
+                            relative_path,
+                            GenericFileEntry {
+                                offset,
+                                size: data_size_u32,
+                                size_compressed: compressed_data_size_u32,
+                            },
+                        );
+                        Ok(())
+                    }
+                }
             }
-            None => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Inner object was already closed",
-            )),
+        }
+    }
+
+    pub fn remove_file<S: AsRef<str>>(&mut self, relative_path: S) -> bool {
+        if let Some(entry) = self.entries.remove(relative_path.as_ref()) {
+            self.chunks
+                .free_chunk(entry.offset, entry.size_compressed as usize);
+            true
+        } else {
+            false
         }
     }
 
@@ -187,7 +271,7 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         };
         let file_table_offset = match self.version_major {
             2 => self.write_grf_table_200()?,
-            1 => 0, // TODO(LinkZ): Implement
+            1 => std::unimplemented!(), // TODO(LinkZ): Implement
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -196,61 +280,101 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
             }
         };
         match &mut self.obj {
+            None => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Inner object was already closed",
+            )),
             Some(w) => {
                 // Update the header
                 w.seek(SeekFrom::Start(self.start_offset))?;
                 write_grf_header(
                     (self.version_major << 8) | (self.version_minor),
-                    file_table_offset,
+                    (file_table_offset - GRF_HEADER_SIZE as u64) as u32,
                     v_file_count,
                     w,
-                )?;
-            }
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "Inner object was already closed",
-                ))
+                )
             }
         }
-
-        Ok(())
     }
 
-    fn write_grf_table_200(&mut self) -> io::Result<u32> {
+    fn write_grf_table_200(&mut self) -> io::Result<u64> {
         let mut table: Vec<u8> = Vec::new();
-        let mut current_offset: u32 = 0;
         // Generate table and write files' content
-        for entry in &self.entries {
+        for (relative_path, entry) in &self.entries {
             let grf_file_entry = SerializableGrfFileEntry200 {
                 size_compressed: entry.size_compressed,
                 size_compressed_aligned: entry.size_compressed,
                 size: entry.size,
                 entry_type: 1,
-                offset: current_offset,
+                offset: (entry.offset - GRF_HEADER_SIZE as u64) as u32,
             };
-            current_offset += entry.size_compressed;
-            serialize_win1252cstring(&entry.relative_path, &mut table)?;
+            serialize_win1252cstring(&relative_path, &mut table)?;
             bincode::serialize_into(&mut table, &grf_file_entry).unwrap();
         }
-        let table_size = u32::try_from(table.len()).unwrap();
-        // Compress it
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        encoder.write_all(&table)?;
-        let compressed_table = encoder.finish()?;
-        let compressed_table_size = u32::try_from(compressed_table.len()).unwrap();
         match &mut self.obj {
+            None => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Inner object was already closed",
+            )),
             Some(w) => {
+                // Compress the table
+                let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+                encoder.write_all(&table)?;
+                let compressed_table = encoder.finish()?;
+                let compressed_table_size = compressed_table.len();
+                let table_offset = match self
+                    .chunks
+                    .alloc_chunk(compressed_table_size + 2 * std::mem::size_of::<u32>())
+                {
+                    None => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::BrokenPipe,
+                            "No chunks available",
+                        ))
+                    }
+                    Some(v) => v,
+                };
+                let table_size_u32 = u32::try_from(table.len()).unwrap();
+                let compressed_table_size_u32 = u32::try_from(compressed_table_size).unwrap();
+                w.seek(SeekFrom::Start(self.start_offset + table_offset))?;
                 // Write table's offset and size
-                bincode::serialize_into(w.by_ref(), &compressed_table_size).unwrap();
-                bincode::serialize_into(w.by_ref(), &table_size).unwrap();
+                bincode::serialize_into(w.by_ref(), &compressed_table_size_u32).unwrap();
+                bincode::serialize_into(w.by_ref(), &table_size_u32).unwrap();
                 // Write table's content
                 w.write_all(&compressed_table)?;
+                // Return file table's offset
+                Ok(table_offset)
             }
-            None => {}
         }
-        // Return file table's offset
-        Ok(current_offset)
+    }
+}
+
+impl GrfArchiveBuilder<File> {
+    pub fn open<P: AsRef<Path>>(grf_path: P) -> io::Result<Self> {
+        let mut grf_archive = GrfArchive::open(&grf_path)?;
+        let chunks = dyn_alloc::list_available_chunks(&mut grf_archive)?;
+        let mut entries = HashMap::with_capacity(grf_archive.file_count());
+        for entry in grf_archive.get_entries() {
+            entries.insert(
+                entry.relative_path.clone(),
+                GenericFileEntry {
+                    offset: entry.offset,
+                    size: entry.size as u32,
+                    size_compressed: entry.size_compressed_aligned as u32,
+                },
+            );
+        }
+
+        let file = OpenOptions::new().read(true).write(true).open(&grf_path)?;
+        Ok(Self {
+            obj: Some(file),
+            start_offset: 0,
+            finished: false,
+            version_major: grf_archive.version_major(),
+            version_minor: grf_archive.version_minor(),
+            entries,
+            chunks,
+        })
     }
 }
 
@@ -297,11 +421,18 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn test_append_file() {
+    fn test_add_file() {
         let temp_dir = tempdir().unwrap();
         let output_path = temp_dir.path().join("200-builder.grf");
-        let test_content: HashMap<&str, Vec<u8>> = [
+        let test_content = vec![
             ("data\\file.gat", vec![0u8; 60]),
+            ("data\\subfolder\\file.gnd", vec![0xCCu8; 341]),
+            ("data\\file.gat", (0..129).collect()), // Overwrite
+            ("data\\file2.gat", vec![3u8; 60]),
+        ];
+        let expected_content: HashMap<&str, Vec<u8>> = [
+            ("data\\file.gat", (0..129).collect()),
+            ("data\\file2.gat", vec![3u8; 60]),
             ("data\\subfolder\\file.gnd", vec![0xCCu8; 341]),
         ]
         .iter()
@@ -310,10 +441,10 @@ mod tests {
         // Generate
         {
             let output_file = File::create(&output_path).unwrap();
-            let mut builder = GrfArchiveBuilder::new(output_file, 2, 0).unwrap();
-            for test_file in &test_content {
+            let mut builder = GrfArchiveBuilder::create(output_file, 2, 0).unwrap();
+            for (name, content) in &test_content {
                 builder
-                    .append_file(test_file.0.to_string(), test_file.1.as_slice())
+                    .add_file(name.to_string(), content.as_slice())
                     .unwrap();
             }
             // Call finish manually, even though builder will be dropped on scope exit
@@ -325,13 +456,13 @@ mod tests {
             let file_entries: Vec<GrfFileEntry> = grf_archive.get_entries().cloned().collect();
             for entry in file_entries {
                 let file_path: &str = entry.relative_path.as_str();
-                assert!(test_content.contains_key(file_path));
-                let expected_content = &test_content[file_path];
+                assert!(expected_content.contains_key(file_path));
+                let expected_data = &expected_content[file_path];
                 // Size check
-                assert_eq!(expected_content.len(), entry.size);
+                assert_eq!(expected_data.len(), entry.size);
                 // Content check
                 assert_eq!(
-                    expected_content,
+                    expected_data,
                     &grf_archive.read_file_content(file_path).unwrap()
                 );
             }
@@ -348,7 +479,7 @@ mod tests {
         {
             let mut grf = GrfArchive::open(&grf_path).unwrap();
             let output_file = File::create(&output_path).unwrap();
-            let mut builder = GrfArchiveBuilder::new(output_file, 2, 0).unwrap();
+            let mut builder = GrfArchiveBuilder::create(output_file, 2, 0).unwrap();
             let grf_entries: Vec<GrfFileEntry> = grf.get_entries().cloned().collect();
             for entry in grf_entries {
                 builder

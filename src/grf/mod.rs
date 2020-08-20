@@ -1,7 +1,11 @@
 pub mod builder;
 pub mod reader;
+
 pub use builder::GrfArchiveBuilder;
-pub use reader::GrfArchive;
+pub use reader::{GrfArchive, GrfFileEntry};
 
 mod crypto;
-use reader::{GrfFileEntry, GRF_HEADER_MAGIC, GRF_HEADER_SIZE};
+mod dyn_alloc;
+
+use dyn_alloc::{AvailableChunk, AvailableChunkList};
+use reader::{GRF_HEADER_MAGIC, GRF_HEADER_SIZE};

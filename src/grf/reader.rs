@@ -31,7 +31,7 @@ pub struct GrfArchive {
 
 impl GrfArchive {
     /// Create a new archive with the underlying object as the reader.
-    pub fn open(grf_path: &Path) -> io::Result<GrfArchive> {
+    pub fn open<P: AsRef<Path>>(grf_path: P) -> io::Result<Self> {
         let mut file = File::open(grf_path)?;
         let mut grf_header_buf = [0; GRF_HEADER_SIZE];
         file.read_exact(&mut grf_header_buf)?;
@@ -63,7 +63,7 @@ impl GrfArchive {
                         }
                     };
                 if grf_table_info.table_size_compressed == 0 || grf_table_info.table_size == 0 {
-                    return Ok(GrfArchive {
+                    return Ok(Self {
                         obj: Box::new(file),
                         container: GrfContainer {
                             header: grf_header,
@@ -101,7 +101,7 @@ impl GrfArchive {
                         ))
                     }
                 };
-                Ok(GrfArchive {
+                Ok(Self {
                     obj: Box::new(file),
                     container: GrfContainer {
                         header: grf_header,
@@ -120,7 +120,7 @@ impl GrfArchive {
                 }
                 let table_size = parser_output.len();
                 if table_size == 0 {
-                    return Ok(GrfArchive {
+                    return Ok(Self {
                         obj: Box::new(file),
                         container: GrfContainer {
                             header: grf_header,
@@ -142,7 +142,7 @@ impl GrfArchive {
                         ))
                     }
                 };
-                Ok(GrfArchive {
+                Ok(Self {
                     obj: Box::new(file),
                     container: GrfContainer {
                         header: grf_header,

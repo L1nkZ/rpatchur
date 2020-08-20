@@ -1,12 +1,23 @@
 use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::fs;
 use std::io;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use crate::grf::builder::GrfArchiveBuilder;
-use crate::grf::GrfArchive;
+use crate::grf::reader::GRF_HEADER_SIZE;
+use crate::grf::{GrfArchive, GrfArchiveBuilder, GrfFileEntry};
 use crate::thor::{ThorArchive, ThorFileEntry};
+
+pub enum GrfPatchingMethod {
+    OutOfPlace,
+    InPlace,
+}
+
+enum MergeEntrySource {
+    GrfArchive,
+    ThorArchive,
+}
 
 enum DataTransformation {
     None,
@@ -14,14 +25,44 @@ enum DataTransformation {
 }
 
 struct MergeEntry {
-    // pub relative_path: String,
-    pub source_id: usize,
+    pub source: MergeEntrySource,
     pub source_offset: u64,
     pub data_size: usize,
     pub transformation: DataTransformation,
 }
 
 pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
+    patching_method: GrfPatchingMethod,
+    grf_file_path: P,
+    thor_archive: &mut ThorArchive<R>,
+) -> io::Result<()> {
+    match patching_method {
+        GrfPatchingMethod::InPlace => apply_patch_to_grf_ip(grf_file_path, thor_archive),
+        GrfPatchingMethod::OutOfPlace => apply_patch_to_grf_oop(grf_file_path, thor_archive),
+    }
+}
+
+/// Patches a GRF in an in-place manner.
+/// Faster but produce output of bigger size and can corrupt file in case of error.
+fn apply_patch_to_grf_ip<P: AsRef<Path>, R: Read + Seek>(
+    grf_file_path: P,
+    thor_archive: &mut ThorArchive<R>,
+) -> io::Result<()> {
+    let mut builder = GrfArchiveBuilder::open(grf_file_path)?;
+    let thor_entries: Vec<ThorFileEntry> = thor_archive.get_entries().cloned().collect();
+    for entry in thor_entries {
+        if entry.is_removed {
+            let _ = builder.remove_file(&entry.relative_path);
+        } else if !entry.is_internal() {
+            builder.import_raw_entry_from_thor(thor_archive, entry.relative_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Patches a GRF in an out-of-place manner.
+/// Safer and produce output of smaller size but slower.
+fn apply_patch_to_grf_oop<P: AsRef<Path>, R: Read + Seek>(
     grf_file_path: P,
     thor_archive: &mut ThorArchive<R>,
 ) -> io::Result<()> {
@@ -43,7 +84,7 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
         merge_entries.insert(
             entry.relative_path.clone(),
             MergeEntry {
-                source_id: 0, // Original GRF
+                source: MergeEntrySource::GrfArchive,
                 source_offset: entry.offset,
                 data_size: entry.size_compressed,
                 transformation: DataTransformation::None,
@@ -58,7 +99,7 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
         merge_entries.insert(
             entry.relative_path.clone(),
             MergeEntry {
-                source_id: 1, // First THOR archive
+                source: MergeEntrySource::ThorArchive,
                 source_offset: entry.offset,
                 data_size: entry.size_compressed,
                 transformation: DataTransformation::None,
@@ -68,13 +109,13 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
 
     {
         let grf_file = fs::File::create(grf_file_path)?;
-        let mut builder = GrfArchiveBuilder::new(grf_file, 2, 0)?;
+        let mut builder = GrfArchiveBuilder::create(grf_file, 2, 0)?;
         for (relative_path, entry) in merge_entries {
-            match entry.source_id {
-                0 => {
+            match entry.source {
+                MergeEntrySource::GrfArchive => {
                     builder.import_raw_entry_from_grf(&mut grf_archive, relative_path)?;
                 }
-                _ => {
+                MergeEntrySource::ThorArchive => {
                     builder.import_raw_entry_from_thor(thor_archive, relative_path)?;
                 }
             }
@@ -155,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_patch_to_grf() {
+    fn test_apply_patch_to_grf_ip() {
         let grf_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/grf");
         let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
         // Empty GRF
@@ -174,7 +215,47 @@ mod tests {
 
             let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
             let nb_of_added_files = thor_archive.file_count() - 1;
-            apply_patch_to_grf(&grf_archive_path, &mut thor_archive).unwrap();
+            apply_patch_to_grf(
+                GrfPatchingMethod::InPlace,
+                &grf_archive_path,
+                &mut thor_archive,
+            )
+            .unwrap();
+
+            // After patching
+            let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
+            assert_eq!(nb_of_added_files, grf_archive.file_count());
+            assert_eq!(grf_archive.version_major(), grf_version_major);
+            assert_eq!(grf_archive.version_minor(), grf_version_minor);
+        }
+    }
+
+    #[test]
+    fn test_apply_patch_to_grf_oop() {
+        let grf_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/grf");
+        let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        // Empty GRF
+        {
+            let temp_dir = tempdir().unwrap();
+
+            let thor_archive_path = thor_dir_path.join("small.thor");
+            let grf_archive_path = temp_dir.path().join("empty.grf");
+            fs::copy(grf_dir_path.join("200-empty.grf"), &grf_archive_path).unwrap();
+
+            // Before patching
+            let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
+            assert_eq!(0, grf_archive.file_count());
+            let grf_version_major = grf_archive.version_major();
+            let grf_version_minor = grf_archive.version_minor();
+
+            let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
+            let nb_of_added_files = thor_archive.file_count() - 1;
+            apply_patch_to_grf(
+                GrfPatchingMethod::OutOfPlace,
+                &grf_archive_path,
+                &mut thor_archive,
+            )
+            .unwrap();
 
             // After patching
             let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
