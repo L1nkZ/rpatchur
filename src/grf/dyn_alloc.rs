@@ -156,3 +156,51 @@ impl AvailableChunkList {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const START_OFFSET: u64 = GRF_HEADER_SIZE as u64;
+
+    #[test]
+    fn test_chunk_list_basic() {
+        let size1: usize = 90;
+        let size2: usize = 23;
+        let size3: usize = 50;
+        let mut chunk_list = AvailableChunkList::new();
+        // Alloc a first block
+        let res = chunk_list.alloc_chunk(size1);
+        assert_eq!(Some(START_OFFSET), res);
+        // Alloc a second chunk which should be located right after the previous one
+        let res = chunk_list.alloc_chunk(size2);
+        assert_eq!(Some(START_OFFSET + size1 as u64), res);
+
+        // Free the first chunk
+        chunk_list.free_chunk(START_OFFSET, size1);
+        // Allocated chunk should fit into the previously freed chunk
+        let res = chunk_list.alloc_chunk(size1);
+        assert_eq!(Some(START_OFFSET), res);
+        // Alloc another chunk which should be located after the first two chunks
+        let res = chunk_list.alloc_chunk(size3);
+        assert_eq!(Some(START_OFFSET + size1 as u64 + size2 as u64), res);
+    }
+
+    #[test]
+    fn test_chunk_list_realloc() {
+        let chunk_size: usize = 64;
+        let mut chunk_list = AvailableChunkList::new();
+        let _ = chunk_list.alloc_chunk(chunk_size);
+        let _ = chunk_list.alloc_chunk(chunk_size);
+
+        // Reallocate the first block with a smaller size, should not move
+        let res = chunk_list.realloc_chunk(START_OFFSET, chunk_size, chunk_size - 1);
+        assert_eq!(Some(START_OFFSET), res);
+
+        // Reallocate the first block with a bigger size, should move
+        let res = chunk_list.realloc_chunk(START_OFFSET, chunk_size, chunk_size + 1);
+        assert_eq!(Some(START_OFFSET + 2 * chunk_size as u64), res);
+        let res = chunk_list.alloc_chunk(chunk_size);
+        assert_eq!(Some(START_OFFSET), res);
+    }
+}

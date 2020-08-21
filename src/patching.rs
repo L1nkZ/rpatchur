@@ -190,6 +190,7 @@ mod tests {
             // After patching
             assert!(expected_file_path.exists());
             assert_eq!(nb_of_added_files, count_files(temp_dir.path()));
+            // TODO(LinkZ): Check content
         }
     }
 
@@ -226,6 +227,7 @@ mod tests {
             assert_eq!(grf_archive.version_major(), grf_version_major);
             assert_eq!(grf_archive.version_minor(), grf_version_minor);
         }
+        // TODO(LinkZ): Non-empty GRF patching
     }
 
     #[test]
@@ -261,5 +263,6 @@ mod tests {
             assert_eq!(grf_archive.version_major(), grf_version_major);
             assert_eq!(grf_archive.version_minor(), grf_version_minor);
         }
+        // TODO(LinkZ): Non-empty GRF patching
     }
 }
