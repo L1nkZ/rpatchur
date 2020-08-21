@@ -19,7 +19,7 @@ use nom::*;
 const HEADER_MAGIC: &str = "ASSF (C) 2007 Aeomin DEV";
 const INTEGRITY_FILE_NAME: &str = "data.integrity";
 
-type ThorPatchList = Vec<ThorPatchInfo>;
+pub type ThorPatchList = Vec<ThorPatchInfo>;
 
 /// Parses Thor's plist.txt file
 pub fn patch_list_from_string(content: &str) -> ThorPatchList {

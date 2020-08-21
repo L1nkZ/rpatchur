@@ -20,7 +20,7 @@ use config::{parse_configuration, PatcherConfiguration};
 use log::{error, info, trace, warn};
 use patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use serde::{Deserialize, Serialize};
-use thor::ThorArchive;
+use thor::{ThorArchive, ThorPatchList};
 use url::Url;
 use web_view::{Content, Handle, WebView};
 
@@ -161,25 +161,14 @@ fn spawn_patching_thread(
             error!("{}", err_msg);
             dispatch_patching_status(&webview_handle, PatchingStatus::Error(err_msg));
         };
-        let patch_url = Url::parse(config.web.patch_url.as_str()).unwrap();
         let patch_list_url = Url::parse(config.web.plist_url.as_str()).unwrap();
-        let resp = match reqwest::blocking::get(patch_list_url) {
-            Ok(v) => v,
+        let mut patch_list = match fetch_patch_list(patch_list_url) {
             Err(e) => {
                 report_error(format!("Failed to retrieve the patch list: {}.", e));
                 return;
             }
-        };
-        if !resp.status().is_success() {
-            report_error("Patch list file not found on the remote server.".to_string());
-            return;
-        }
-        let patch_index_content = match resp.text() {
             Ok(v) => v,
-            Err(_) => return,
         };
-        info!("Parsing patch index...");
-        let mut patch_list = thor::patch_list_from_string(patch_index_content.as_str());
         info!("Successfully fetched patch list: {:?}", patch_list);
 
         // Try to read cache
@@ -203,138 +192,185 @@ fn spawn_patching_thread(
 
         // Try fetching patch files
         info!("Downloading patches... ");
-        let patch_count = patch_list.len();
-        let mut pending_patch_queue: Vec<PendingPatch> = vec![];
-        dispatch_patching_status(
-            &webview_handle,
-            PatchingStatus::DownloadInProgress(0, patch_count),
-        );
-        for (patch_number, patch) in patch_list.into_iter().enumerate() {
-            let patch_file_url = match patch_url.join(patch.file_name.as_str()) {
-                Ok(v) => v,
-                Err(_) => {
-                    report_error(format!(
-                        "Invalid file name '{}' given in patch list file.",
-                        patch.file_name
-                    ));
-                    return;
-                }
-            };
-            let mut tmp_file = tempfile::tempfile().unwrap();
-            let mut resp = reqwest::blocking::get(patch_file_url).unwrap();
-            if !resp.status().is_success() {
-                report_error(format!(
-                    "Patch file '{}' not found on the remote server.",
-                    patch.file_name
-                ));
-                return;
-            }
-            let _bytes_copied = match resp.copy_to(&mut tmp_file) {
-                Ok(v) => v,
+        let patch_url = Url::parse(config.web.patch_url.as_str()).unwrap();
+        let pending_patch_queue =
+            match fetch_pending_patches(patch_url, patch_list, &webview_handle) {
                 Err(e) => {
-                    report_error(format!(
-                        "Failed to download file '{}': {}.",
-                        patch.file_name, e
-                    ));
+                    report_error(format!("Failed to download patches: {}.", e));
                     return;
                 }
+                Ok(v) => v,
             };
-            // File's been downloaded, seek to start and add it to the queue
-            let _offset = tmp_file.seek(SeekFrom::Start(0));
-            pending_patch_queue.push(PendingPatch {
-                info: patch,
-                local_file: tmp_file,
-            });
-            // Update status
-            dispatch_patching_status(
-                &webview_handle,
-                PatchingStatus::DownloadInProgress(patch_number, patch_count),
-            );
-        }
         info!("Done");
-        // Proceed with actual patching
-        let current_working_dir = match env::current_dir() {
-            Ok(v) => v,
-            Err(e) => {
-                report_error(format!(
-                    "Failed to resolve current working directory: {}.",
-                    e
-                ));
-                return;
-            }
-        };
-        info!("Applying patches...");
-        let patch_count = pending_patch_queue.len();
-        dispatch_patching_status(
-            &webview_handle,
-            PatchingStatus::InstallationInProgress(0, patch_count),
-        );
-        for (patch_number, pending_patch) in pending_patch_queue.into_iter().enumerate() {
-            info!("Processing {}", pending_patch.info.file_name);
-            let mut thor_archive = match ThorArchive::new(pending_patch.local_file) {
-                Ok(v) => v,
-                Err(e) => {
-                    report_error(format!(
-                        "Cannot read '{}': {}.",
-                        pending_patch.info.file_name, e
-                    ));
-                    return;
-                }
-            };
 
-            if thor_archive.use_grf_merging() {
-                // Patch GRF file
-                let patch_target_grf_name = {
-                    if thor_archive.target_grf_name().is_empty() {
-                        config.client.default_grf_name.clone()
-                    } else {
-                        thor_archive.target_grf_name()
-                    }
-                };
-                trace!("Target GRF: {:?}", patch_target_grf_name);
-                let grf_patching_method = match config.patching.in_place {
-                    true => GrfPatchingMethod::InPlace,
-                    false => GrfPatchingMethod::OutOfPlace,
-                };
-                if let Err(e) = apply_patch_to_grf(
-                    grf_patching_method,
-                    current_working_dir.join(&patch_target_grf_name),
-                    &mut thor_archive,
-                ) {
-                    report_error(format!(
-                        "Failed to patch '{}': {}.",
-                        patch_target_grf_name, e
-                    ));
-                    return;
-                }
-            } else {
-                // Patch root directory
-                if let Err(e) = apply_patch_to_disk(&current_working_dir, &mut thor_archive) {
-                    report_error(format!(
-                        "Failed to apply patch '{}': {}.",
-                        pending_patch.info.file_name, e
-                    ));
-                    return;
-                }
-            }
-            // Update the cache file with the last successful patch's index
-            if let Err(e) = write_cache_file(
-                &cache_file_path,
-                PatcherCache {
-                    last_patch_index: pending_patch.info.index,
-                },
-            ) {
-                warn!("Failed to write cache file: {}.", e);
-            }
-            // Update status
-            dispatch_patching_status(
-                &webview_handle,
-                PatchingStatus::InstallationInProgress(patch_number, patch_count),
-            );
+        // Proceed with actual patching
+        info!("Applying patches...");
+        if let Err(e) = apply_patches(
+            pending_patch_queue,
+            &webview_handle,
+            &config,
+            &cache_file_path,
+        ) {
+            report_error(format!("Failed to apply patches: {}.", e));
+            return;
         }
-        dispatch_patching_status(&webview_handle, PatchingStatus::Ready);
         info!("Patching finished!");
     })
+}
+
+fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> {
+    let resp = match reqwest::blocking::get(patch_list_url) {
+        Err(e) => {
+            return Err(format!("Failed to retrieve the patch list: {}", e));
+        }
+        Ok(v) => v,
+    };
+    if !resp.status().is_success() {
+        return Err("Patch list file not found on the remote server".to_string());
+    }
+    let patch_index_content = match resp.text() {
+        Err(_) => return Err("Invalid responde body".to_string()),
+        Ok(v) => v,
+    };
+    info!("Parsing patch index...");
+    Ok(thor::patch_list_from_string(patch_index_content.as_str()))
+}
+
+fn fetch_pending_patches(
+    patch_url: Url,
+    patch_list: ThorPatchList,
+    webview_handle: &Handle<config::PatcherConfiguration>,
+) -> Result<Vec<PendingPatch>, String> {
+    let patch_count = patch_list.len();
+    let mut pending_patch_queue = Vec::with_capacity(patch_count);
+    dispatch_patching_status(
+        &webview_handle,
+        PatchingStatus::DownloadInProgress(0, patch_count),
+    );
+    for (patch_number, patch) in patch_list.into_iter().enumerate() {
+        let patch_file_url = match patch_url.join(patch.file_name.as_str()) {
+            Err(_) => {
+                return Err(format!(
+                    "Invalid file name '{}' given in patch list file.",
+                    patch.file_name
+                ));
+            }
+            Ok(v) => v,
+        };
+        let mut tmp_file = tempfile::tempfile().unwrap();
+        let mut resp = reqwest::blocking::get(patch_file_url).unwrap();
+        if !resp.status().is_success() {
+            return Err(format!(
+                "Patch file '{}' not found on the remote server.",
+                patch.file_name
+            ));
+        }
+        let _bytes_copied = match resp.copy_to(&mut tmp_file) {
+            Err(e) => {
+                return Err(format!(
+                    "Failed to download file '{}': {}.",
+                    patch.file_name, e
+                ));
+            }
+            Ok(v) => v,
+        };
+        // File's been downloaded, seek to start and add it to the queue
+        let _offset = tmp_file.seek(SeekFrom::Start(0));
+        pending_patch_queue.push(PendingPatch {
+            info: patch,
+            local_file: tmp_file,
+        });
+        // Update status
+        dispatch_patching_status(
+            &webview_handle,
+            PatchingStatus::DownloadInProgress(patch_number, patch_count),
+        );
+    }
+    Ok(pending_patch_queue)
+}
+
+fn apply_patches<P: AsRef<Path>>(
+    pending_patch_queue: Vec<PendingPatch>,
+    webview_handle: &Handle<config::PatcherConfiguration>,
+    config: &PatcherConfiguration,
+    cache_file_path: P,
+) -> Result<(), String> {
+    let current_working_dir = match env::current_dir() {
+        Err(e) => {
+            return Err(format!(
+                "Failed to resolve current working directory: {}.",
+                e
+            ));
+        }
+        Ok(v) => v,
+    };
+    let patch_count = pending_patch_queue.len();
+    dispatch_patching_status(
+        &webview_handle,
+        PatchingStatus::InstallationInProgress(0, patch_count),
+    );
+    for (patch_number, pending_patch) in pending_patch_queue.into_iter().enumerate() {
+        info!("Processing {}", pending_patch.info.file_name);
+        let mut thor_archive = match ThorArchive::new(pending_patch.local_file) {
+            Err(e) => {
+                return Err(format!(
+                    "Cannot read '{}': {}.",
+                    pending_patch.info.file_name, e
+                ));
+            }
+            Ok(v) => v,
+        };
+
+        if thor_archive.use_grf_merging() {
+            // Patch GRF file
+            let patch_target_grf_name = {
+                if thor_archive.target_grf_name().is_empty() {
+                    config.client.default_grf_name.clone()
+                } else {
+                    thor_archive.target_grf_name()
+                }
+            };
+            trace!("Target GRF: {:?}", patch_target_grf_name);
+            let grf_patching_method = match config.patching.in_place {
+                true => GrfPatchingMethod::InPlace,
+                false => GrfPatchingMethod::OutOfPlace,
+            };
+            if let Err(e) = apply_patch_to_grf(
+                grf_patching_method,
+                current_working_dir.join(&patch_target_grf_name),
+                &mut thor_archive,
+            ) {
+                return Err(format!(
+                    "Failed to patch '{}': {}.",
+                    patch_target_grf_name, e
+                ));
+            }
+        } else {
+            // Patch root directory
+            if let Err(e) = apply_patch_to_disk(&current_working_dir, &mut thor_archive) {
+                return Err(format!(
+                    "Failed to apply patch '{}': {}.",
+                    pending_patch.info.file_name, e
+                ));
+            }
+        }
+        // Update the cache file with the last successful patch's index
+        if let Err(e) = write_cache_file(
+            &cache_file_path,
+            PatcherCache {
+                last_patch_index: pending_patch.info.index,
+            },
+        ) {
+            warn!("Failed to write cache file: {}.", e);
+        }
+        // Update status
+        dispatch_patching_status(
+            &webview_handle,
+            PatchingStatus::InstallationInProgress(patch_number, patch_count),
+        );
+    }
+    dispatch_patching_status(&webview_handle, PatchingStatus::Ready);
+    Ok(())
 }
 
 fn dispatch_patching_status(webview_handle: &Handle<PatcherConfiguration>, status: PatchingStatus) {
