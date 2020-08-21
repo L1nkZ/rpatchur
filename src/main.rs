@@ -214,6 +214,7 @@ fn spawn_patching_thread(
             report_error(format!("Failed to apply patches: {}.", e));
             return;
         }
+        dispatch_patching_status(&webview_handle, PatchingStatus::Ready);
         info!("Patching finished!");
     })
 }
@@ -369,7 +370,6 @@ fn apply_patches<P: AsRef<Path>>(
             PatchingStatus::InstallationInProgress(patch_number, patch_count),
         );
     }
-    dispatch_patching_status(&webview_handle, PatchingStatus::Ready);
     Ok(())
 }
 

@@ -3,9 +3,19 @@ name = "rpatchur"
 version = "0.1.0"
 authors = ["LinkZ <wanthost@gmail.com>"]
 edition = "2018"
+build = "build.rs"
+
+[package.metadata.winres]
+FileDescription = "A customizable patcher for Ragnarok Online"
+ProductName = "RPatchur"
+ProductVersion = "0.1.0"
+LegalCopyright = "Copyright © 2020 rpatchur developers"
 
 [profile.release]
 lto = true
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
 
 [dependencies]
 web-view = "0.6"
@@ -21,6 +31,7 @@ log = { version = "0.4", features = ["release_max_level_off"] }
 simple_logger = "1.6"
 crc = "1.8"
 bincode = "1.2"
+
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"
 

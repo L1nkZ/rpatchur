@@ -32,6 +32,12 @@ Examples
 You can find example files for the UI and the configuration file in the
 `examples` directory.
 
+Additional Notes
+----------------
+
+The icon used for Windows executables was taken from
+[rathena.org](https://rathena.org/board/files/file/3190-s1-lykos-icon-pack/).
+
 License
 -------
 
