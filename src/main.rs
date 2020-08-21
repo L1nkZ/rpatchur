@@ -195,8 +195,7 @@ fn spawn_patching_thread(
             // First we verify that our cached index looks relevant
             let should_filter_patch_list = patch_list
                 .iter()
-                .find(|&x| x.index == patcher_cache.last_patch_index)
-                .is_some();
+                .any(|x| x.index == patcher_cache.last_patch_index);
             if should_filter_patch_list {
                 patch_list.retain(|x| x.index > patcher_cache.last_patch_index);
             }
@@ -205,13 +204,12 @@ fn spawn_patching_thread(
         // Try fetching patch files
         info!("Downloading patches... ");
         let patch_count = patch_list.len();
-        let mut patch_number: usize = 0;
         let mut pending_patch_queue: Vec<PendingPatch> = vec![];
         dispatch_patching_status(
             &webview_handle,
-            PatchingStatus::DownloadInProgress(patch_number, patch_count),
+            PatchingStatus::DownloadInProgress(0, patch_count),
         );
-        for patch in patch_list {
+        for (patch_number, patch) in patch_list.into_iter().enumerate() {
             let patch_file_url = match patch_url.join(patch.file_name.as_str()) {
                 Ok(v) => v,
                 Err(_) => {
@@ -248,7 +246,6 @@ fn spawn_patching_thread(
                 local_file: tmp_file,
             });
             // Update status
-            patch_number += 1;
             dispatch_patching_status(
                 &webview_handle,
                 PatchingStatus::DownloadInProgress(patch_number, patch_count),
@@ -268,12 +265,11 @@ fn spawn_patching_thread(
         };
         info!("Applying patches...");
         let patch_count = pending_patch_queue.len();
-        let mut patch_number: usize = 0;
         dispatch_patching_status(
             &webview_handle,
-            PatchingStatus::InstallationInProgress(patch_number, patch_count),
+            PatchingStatus::InstallationInProgress(0, patch_count),
         );
-        for pending_patch in pending_patch_queue {
+        for (patch_number, pending_patch) in pending_patch_queue.into_iter().enumerate() {
             info!("Processing {}", pending_patch.info.file_name);
             let mut thor_archive = match ThorArchive::new(pending_patch.local_file) {
                 Ok(v) => v,
@@ -331,7 +327,6 @@ fn spawn_patching_thread(
                 warn!("Failed to write cache file: {}.", e);
             }
             // Update status
-            patch_number += 1;
             dispatch_patching_status(
                 &webview_handle,
                 PatchingStatus::InstallationInProgress(patch_number, patch_count),
@@ -380,7 +375,7 @@ fn read_cache_file<P: AsRef<Path>>(cache_file_path: P) -> io::Result<PatcherCach
 fn write_cache_file<P: AsRef<Path>>(cache_file_path: P, new_cache: PatcherCache) -> io::Result<()> {
     let file = File::create(cache_file_path)?;
     match bincode::serialize_into(file, &new_cache) {
-        Ok(v) => Ok(v),
+        Ok(_) => Ok(()),
         Err(e) => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Failed to serialize patcher cache: {}", e),

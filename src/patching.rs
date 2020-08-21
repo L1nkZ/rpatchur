@@ -1,12 +1,10 @@
 use std::collections::HashMap;
-use std::convert::TryFrom;
 use std::fs;
 use std::io;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use crate::grf::reader::GRF_HEADER_SIZE;
-use crate::grf::{GrfArchive, GrfArchiveBuilder, GrfFileEntry};
+use crate::grf::{GrfArchive, GrfArchiveBuilder};
 use crate::thor::{ThorArchive, ThorFileEntry};
 
 pub enum GrfPatchingMethod {
