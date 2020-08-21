@@ -12,6 +12,7 @@ pub struct PatcherConfiguration {
     pub setup: SetupConfiguration,
     pub web: WebConfiguration,
     pub client: ClientConfiguration,
+    pub patching: PatchingConfiguration,
 }
 
 #[derive(Deserialize, Clone)]
@@ -35,14 +36,20 @@ pub struct SetupConfiguration {
 
 #[derive(Deserialize, Clone)]
 pub struct WebConfiguration {
-    pub index_url: String,
-    pub plist_url: String,
-    pub patch_url: String,
+    pub index_url: String, // URL of the index file implementing the UI
+    pub plist_url: String, // URL of the plist.txt file
+    pub patch_url: String, // URL of the directory containing .thor files
 }
 
 #[derive(Deserialize, Clone)]
 pub struct ClientConfiguration {
-    pub default_grf_name: String,
+    pub default_grf_name: String, // GRF file to patch by default
+}
+
+#[derive(Deserialize, Clone)]
+pub struct PatchingConfiguration {
+    pub in_place: bool, // In-place GRF patching
+                        // pub check_integrity: bool,
 }
 
 pub fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> Option<PatcherConfiguration> {

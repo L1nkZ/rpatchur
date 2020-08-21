@@ -296,8 +296,12 @@ fn spawn_patching_thread(
                     }
                 };
                 trace!("Target GRF: {:?}", patch_target_grf_name);
+                let grf_patching_method = match config.patching.in_place {
+                    true => GrfPatchingMethod::InPlace,
+                    false => GrfPatchingMethod::OutOfPlace,
+                };
                 if let Err(e) = apply_patch_to_grf(
-                    GrfPatchingMethod::InPlace,
+                    grf_patching_method,
                     current_working_dir.join(&patch_target_grf_name),
                     &mut thor_archive,
                 ) {
