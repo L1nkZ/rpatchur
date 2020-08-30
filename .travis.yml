@@ -1,0 +1,78 @@
+language: rust
+matrix:
+  include:
+    # Stable channel.
+    - os: linux
+      rust: stable
+      env: TARGET=x86_64-unknown-linux-gnu
+    - os: osx
+      osx_image: xcode11.4 # Catalina
+      rust: stable
+      env: TARGET=x86_64-apple-darwin
+
+    # Beta channel.
+    - os: linux
+      rust: beta
+      env: TARGET=x86_64-unknown-linux-gnu
+
+    # Minimum Rust supported channel.
+    - os: linux
+      rust: 1.40.0
+      env: TARGET=x86_64-unknown-linux-gnu
+    - os: osx
+      rust: 1.40.0
+      env: TARGET=x86_64-apple-darwin
+
+sudo: required
+
+env:
+  global:
+    # Default target on travis-ci.
+    # Used as conditional check in the install stage
+    - HOST=x86_64-unknown-linux-gnu
+    # Used on the deployment script
+    - PROJECT_NAME=rpatchur
+
+before_install:
+  - bash ci/before_install.sh
+
+install:
+  # prevent target re-add error from rustup
+  - if [[ $TRAVIS_OS_NAME = linux && $HOST != $TARGET ]]; then rustup target add $TARGET; fi
+
+script:
+  - cargo build --target "$TARGET" --verbose
+  - cargo test --target "$TARGET" --verbose
+
+before_deploy:
+  - cargo build --target "$TARGET" --release --verbose
+
+deploy:
+  provider: releases
+  # NOTE updating the `api_key.secure`
+  # - go to: https://github.com/settings/tokens/new
+  # - generate new token using `public_repo` scope
+  # - encrypt it using: `travis encrypt API_KEY_HERE`
+  # - paste the output below
+  api_key:
+    secure: "EUUjpqI9FwbyWHjj0cqWQt2toz91TxYgMif9Vsx1+0sAyVq0DUrn30Mw4NwW8rB/YUDKh+6u0rPfvKjz195FWLJtx6B90YzfXhbA7xT628a7ZcP6gH+2epr/Uh7yy3QOt9vhjuBKkdyJYr1SB8cpOGqb5VFbNyvhf2OockdLtsYswhjr3fHvKPiOhO+5bGftpNvxjThyG5Bvkx1dcFDQuHfoj1Vggj3/dbuv2bg7WbXWPst6F3mL1ersAqvvPIhFXYrRkFI+hA8ReUagaEt0FSLKCCN1sGPLwu+NzecIBTSo3TF0dIbrVhmvCWIaL3MtJrQ9bynDmCVtB8d1eopkjIPYi0jFngu/HIlUKaJBACjOE3XsfP0TzFEyQRfN5UUUAQqmXXPf0Y+kzblxbuEuyBMpSrFWcPrh4AYWq8pWAbIhJYo+dE/4JTcVst96gn5ArZ9fN0sqh4B7g8WZXBzaaa3idvgIn6Tvj9qHOZQZ7njoW3ZjfbjRHjIIYFvnlVHsgNEBwozbSjERQ1sylRGhGEkR2v5OIP2zzsO3jy6ebJFS38K6FY+RWsmy9ls7b6s+inliUh2yy+w3jRSTg95lNrvKLVMdFrnP2ngklG6vJM6xsv4XPpgTCQjpetLsvTDdFvTGigYvMMVK2ehh4XHUUiUBG9TMMdFK/rxOw/FYL8g="
+  # for uploading multiple files
+  file_glob: true
+  # NOTE explanation on each env variable
+  # - PROJECT_NAME: name of the project, set on the `env.global` above
+  # - TRAVIS_TAG: tag name that the build is being deployed for, usually the version number
+  # - TARGET: target triple of the build
+  file:
+    - $PROJECT_NAME-$TRAVIS_TAG-$TARGET.*
+  # don't delete artifacts from previous stage
+  skip_cleanup: true
+  on:
+    # deploy only if we push a tag
+    tags: true
+    # deploy only on stable channel that has TARGET env variable sets
+    condition: $TRAVIS_RUST_VERSION = stable && $TARGET != ""
+
+notifications:
+  email:
+    on_success: never
+

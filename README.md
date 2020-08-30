@@ -1,6 +1,9 @@
 RPatchur
 ========
 
+[![Build Status](https://travis-ci.org/L1nkZ/rpatchur.svg?branch=master)](https://travis-ci.org/L1nkZ/rpatchur)
+[![Build status](https://ci.appveyor.com/api/projects/status/uxhueyysdy7f7o9f/branch/master?svg=true)](https://ci.appveyor.com/project/L1nkZ/rpatchur/branch/master)
+
 `rpatchur` is a customizable, cross-platform patcher for Ragnarok Online clients.
 
 Screenshot
