@@ -13,7 +13,6 @@ use encoding::DecoderTrap;
 use flate2::read::ZlibDecoder;
 use nom::error::ErrorKind;
 use nom::number::complete::{le_i16, le_i32, le_u32, le_u8};
-use nom::IResult;
 use nom::*;
 
 const HEADER_MAGIC: &str = "ASSF (C) 2007 Aeomin DEV";
@@ -116,7 +115,7 @@ impl<R: Read + Seek> ThorArchive<R> {
     }
 
     pub fn file_count(&self) -> usize {
-        self.container.header.file_count
+        self.container.entries.len()
     }
 
     pub fn target_grf_name(&self) -> String {
@@ -292,7 +291,7 @@ named!(parse_thor_header<&[u8], ThorHeader>,
             >> target_grf_name: take_str!(target_grf_name_size)
             >> (ThorHeader {
                 use_grf_merging: use_grf_merging == 1,
-                file_count: (file_count - 1) as usize,
+                file_count: file_count as usize,
                 mode: i16_to_thor_mode(mode),
                 target_grf_name: target_grf_name.to_string(),
             }
@@ -347,7 +346,7 @@ named!(parse_single_file_entry<&[u8], ThorFileEntry>,
             size: size as usize,
             relative_path,
             is_removed: false,
-            offset: 0,
+            offset: 0, // This field is set outside the parser
         }
     )
 ));
@@ -400,7 +399,8 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorContainer> {
             // Parse table
             let (output, table) = parse_single_file_table(output)?;
             // Parse the single entry
-            let (output, entry) = parse_single_file_entry(output)?;
+            let (output, mut entry) = parse_single_file_entry(output)?;
+            entry.offset = output.as_ptr() as u64 - input.as_ptr() as u64;
             Ok((
                 output,
                 ThorContainer {
@@ -488,6 +488,20 @@ mod tests {
     fn test_open_thor_container() {
         let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
         {
+            let thor_file_path = thor_dir_path.join("single.thor");
+            let mut thor_archive = ThorArchive::open(&thor_file_path).unwrap();
+            assert_eq!(thor_archive.file_count(), 1);
+            assert_eq!(thor_archive.target_grf_name(), "");
+            assert!(!thor_archive.use_grf_merging());
+            let entry = thor_archive.get_entries().next().unwrap();
+            assert_eq!(entry.offset, 52);
+            assert_eq!(entry.size, 22528);
+            assert_eq!(entry.size_compressed, 20136);
+            assert!(!entry.is_removed);
+            assert_eq!(entry.relative_path, "client.exe");
+            let _content = thor_archive.read_file_content("client.exe").unwrap();
+        }
+        {
             let expected_content: HashMap<&str, usize> = [
                 ("data.integrity", 63),
                 (
@@ -505,6 +519,7 @@ mod tests {
                     assert!(expected_content.contains_key(file_path));
                     let expected_size = expected_content[file_path];
                     assert_eq!(file_entry.size, expected_size);
+                    let _content = thor.read_file_content(file_path).unwrap();
                 }
             };
             let thor_file_path = thor_dir_path.join("tiny.thor");
@@ -515,7 +530,6 @@ mod tests {
             check_tiny_thor_entries(&mut thor_archive);
             assert!(thor_archive.is_valid());
         }
-
         {
             let thor_file_path = thor_dir_path.join("small.thor");
             let mut thor_archive = ThorArchive::open(&thor_file_path).unwrap();
