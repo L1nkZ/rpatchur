@@ -30,6 +30,9 @@
 <body>
     <!-- Patcher status callbacks -->
     <script type="text/javascript">
+        $(document).ready(function() {
+            external.invoke('start_update');
+        });
         function patchingStatusReady() {
             $("#download-progress-bar")
                 .css("width", "100%")
