@@ -1,7 +1,8 @@
 use std::fs::File;
 use std::io::BufReader;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use super::get_patcher_name;
 use log::error;
 use serde::Deserialize;
 
@@ -52,7 +53,14 @@ pub struct PatchingConfiguration {
                         // pub check_integrity: bool,
 }
 
-pub fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> Option<PatcherConfiguration> {
+pub fn retrieve_patcher_configuration() -> Option<PatcherConfiguration> {
+    let patcher_name = get_patcher_name()?;
+    let configuration_file_name = PathBuf::from(patcher_name).with_extension("json");
+    // Read the JSON contents of the file as an instance of `PatcherConfiguration`.
+    parse_configuration(configuration_file_name)
+}
+
+fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> Option<PatcherConfiguration> {
     let config_file = match File::open(config_file_path) {
         Ok(t) => t,
         _ => {
