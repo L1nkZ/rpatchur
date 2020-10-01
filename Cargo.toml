@@ -22,8 +22,8 @@ web-view = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 futures = "0.3"
-tokio = { version = "0.2", features = ["macros", "rt-threaded"] }
-reqwest = "0.10"
+tokio = { version = "0.2", features = ["macros", "rt-threaded", "fs"] }
+reqwest = { version = "0.10", features = ["stream"] }
 url = "2.1"
 tempfile = "3.1"
 nom = "5.1"

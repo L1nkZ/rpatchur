@@ -1,6 +1,5 @@
 use std::env;
-use std::fs::File;
-use std::io::{self, prelude::Seek, SeekFrom};
+use std::io::{prelude::Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use super::cache::{read_cache_file, write_cache_file, PatcherCache};
@@ -8,6 +7,8 @@ use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::thor::{self, ThorArchive, ThorPatchList};
 use crate::ui::WebViewUserData;
+use std::fs::File;
+use std::io::Write;
 use tokio::sync::mpsc;
 use url::Url;
 use web_view::Handle;
@@ -193,16 +194,13 @@ fn check_for_cancellation(
 ) -> Option<InterruptibleFnError> {
     if let Ok(cmd) = patching_thread_rx.try_recv() {
         match cmd {
-            PatcherCommand::Cancel => {
-                return Some(InterruptibleFnError::Interrupted(Interruption::Cancel))
-            }
-            PatcherCommand::Exit => {
-                return Some(InterruptibleFnError::Interrupted(Interruption::Exit))
-            }
-            _ => return None,
+            PatcherCommand::Cancel => Some(InterruptibleFnError::Interrupted(Interruption::Cancel)),
+            PatcherCommand::Exit => Some(InterruptibleFnError::Interrupted(Interruption::Exit)),
+            _ => None,
         }
+    } else {
+        None
     }
-    None
 }
 
 async fn download_patches(
@@ -228,9 +226,17 @@ async fn download_patches(
             }
             Ok(v) => v,
         };
-        let mut tmp_file = tempfile::tempfile().unwrap();
+        let mut tmp_file = match tempfile::tempfile() {
+            Err(e) => {
+                return Err(InterruptibleFnError::Err(format!(
+                    "Failed to create temporary file: {}.",
+                    e
+                )))
+            }
+            Ok(v) => v,
+        };
         let download_future = async {
-            let resp = match reqwest::get(patch_file_url).await {
+            let mut resp = match reqwest::get(patch_file_url).await {
                 Err(e) => {
                     return Err(format!(
                         "Failed to download file '{}': {}.",
@@ -245,24 +251,12 @@ async fn download_patches(
                     patch.file_name
                 ));
             }
-            let resp_body = match resp.text().await {
-                Err(e) => {
-                    return Err(format!(
-                        "Failed to download file '{}': {}.",
-                        patch.file_name, e
-                    ))
-                }
-                Ok(v) => v,
-            };
-            let _bytes_copied = match io::copy(&mut resp_body.as_bytes(), &mut tmp_file) {
-                Err(e) => {
-                    return Err(format!(
-                        "Failed to download file '{}': {}.",
-                        patch.file_name, e
-                    ));
-                }
-                Ok(v) => v,
-            };
+
+            while let Some(chunk) = resp.chunk().await.ok().unwrap_or(None) {
+                let _ = tmp_file
+                    .write(&chunk[..])
+                    .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e));
+            }
             Ok(())
         };
         let cancel_future = wait_for_cancellation(patching_thread_rx);
@@ -273,7 +267,7 @@ async fn download_patches(
         }
 
         // File's been downloaded, seek to start and add it to the queue
-        let _offset = tmp_file.seek(SeekFrom::Start(0));
+        let _ = tmp_file.seek(SeekFrom::Start(0));
         pending_patch_queue.push(PendingPatch {
             info: patch,
             local_file: tmp_file,
