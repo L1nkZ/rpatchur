@@ -5,7 +5,48 @@ use std::process::Command;
 use crate::patcher::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use futures::executor::block_on;
 use tokio::sync::mpsc;
-use web_view::{Content, WebView};
+use web_view::{Content, Handle, WebView};
+
+pub struct UIController {
+    web_view_handle: Handle<WebViewUserData>,
+}
+impl UIController {
+    pub fn new<'a>(web_view: &WebView<'a, WebViewUserData>) -> UIController {
+        UIController {
+            web_view_handle: web_view.handle(),
+        }
+    }
+
+    pub async fn dispatch_patching_status(&self, status: PatchingStatus) {
+        if let Err(e) = self.web_view_handle.dispatch(move |webview| {
+            let result = match status {
+                PatchingStatus::Ready => webview.eval("patchingStatusReady()"),
+                PatchingStatus::Error(msg) => {
+                    webview.eval(&format!("patchingStatusError(\"{}\")", msg))
+                }
+                PatchingStatus::DownloadInProgress(nb_downloaded, nb_total) => webview.eval(
+                    &format!("patchingStatusDownloading({}, {})", nb_downloaded, nb_total),
+                ),
+                PatchingStatus::InstallationInProgress(nb_installed, nb_total) => webview.eval(
+                    &format!("patchingStatusInstalling({}, {})", nb_installed, nb_total),
+                ),
+            };
+            if let Err(e) = result {
+                log::warn!("Failed to dispatch patching status: {}.", e);
+            }
+            Ok(())
+        }) {
+            log::warn!("Failed to dispatch patching status: {}.", e);
+        }
+    }
+}
+
+pub enum PatchingStatus {
+    Ready,
+    Error(String),                        // Error message
+    DownloadInProgress(usize, usize),     // Downloaded, Total
+    InstallationInProgress(usize, usize), // Installed, Total
+}
 
 pub struct WebViewUserData {
     patcher_config: PatcherConfiguration,

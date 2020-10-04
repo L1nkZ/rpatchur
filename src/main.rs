@@ -9,7 +9,7 @@ use std::io;
 
 use patcher::{patcher_thread_routine, retrieve_patcher_configuration, PatcherCommand};
 use tokio::{runtime, sync::mpsc};
-use ui::WebViewUserData;
+use ui::{UIController, WebViewUserData};
 
 fn main() {
     simple_logger::init().expect("Failed to initalize the logger");
@@ -25,7 +25,11 @@ fn main() {
     let (tx, rx) = mpsc::channel::<PatcherCommand>(8);
     let webview = ui::build_webview(WebViewUserData::new(config.clone(), tx))
         .expect("Failed to build a web view");
-    let patching_task = tokio_rt.spawn(patcher_thread_routine(webview.handle(), config, rx));
+    let patching_task = tokio_rt.spawn(patcher_thread_routine(
+        UIController::new(&webview),
+        config,
+        rx,
+    ));
     webview.run().unwrap();
     // Join the patching task from our synchronous function
     tokio_rt.block_on(async {

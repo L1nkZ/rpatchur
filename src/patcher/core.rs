@@ -9,10 +9,9 @@ use super::cancellation::{check_for_cancellation, wait_for_cancellation, Interru
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::thor::{self, ThorArchive, ThorPatchList};
-use crate::ui::WebViewUserData;
+use crate::ui::{PatchingStatus, UIController};
 use tokio::sync::mpsc;
 use url::Url;
-use web_view::Handle;
 
 #[derive(Debug)]
 struct PendingPatch {
@@ -20,15 +19,8 @@ struct PendingPatch {
     local_file: File,
 }
 
-enum PatchingStatus {
-    Ready,
-    Error(String),                        // Error message
-    DownloadInProgress(usize, usize),     // Downloaded, Total
-    InstallationInProgress(usize, usize), // Installed, Total
-}
-
 pub async fn patcher_thread_routine(
-    webview_handle: Handle<WebViewUserData>,
+    ui_controller: UIController,
     config: PatcherConfiguration,
     mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
 ) {
@@ -39,24 +31,27 @@ pub async fn patcher_thread_routine(
         return;
     }
 
-    interruptible_patcher_routine(webview_handle, config, patcher_thread_rx).await
+    interruptible_patcher_routine(ui_controller, config, patcher_thread_rx).await
 }
 
+/// Returns when a start command is received, ignoring all other commands that might be received.
+/// Returns an error if the other end of the channel happens to be closed while waiting.
 async fn wait_for_start_command(rx: &mut mpsc::Receiver<PatcherCommand>) -> Result<(), String> {
     loop {
         match rx.recv().await {
             None => return Err("Channel has been closed".to_string()),
-            Some(v) => match v {
-                PatcherCommand::Cancel => return Err("Cancel command received".to_string()),
-                PatcherCommand::Start => break,
-            },
+            Some(v) => {
+                if let PatcherCommand::Start = v {
+                    break;
+                }
+            }
         }
     }
     Ok(())
 }
 
 async fn interruptible_patcher_routine(
-    webview_handle: Handle<WebViewUserData>,
+    ui_controller: UIController,
     config: PatcherConfiguration,
     mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
 ) {
@@ -64,7 +59,9 @@ async fn interruptible_patcher_routine(
     // Declare a utility function for dispatching errors to the UI as well as to the logger
     let report_error = |err_msg| async {
         log::error!("{}", err_msg);
-        dispatch_patching_status(&webview_handle, PatchingStatus::Error(err_msg)).await;
+        ui_controller
+            .dispatch_patching_status(PatchingStatus::Error(err_msg))
+            .await;
     };
 
     let patch_list_url = Url::parse(config.web.plist_url.as_str()).unwrap();
@@ -102,7 +99,7 @@ async fn interruptible_patcher_routine(
     let pending_patch_queue = match download_patches(
         patch_url,
         patch_list,
-        &webview_handle,
+        &ui_controller,
         &mut patcher_thread_rx,
     )
     .await
@@ -125,7 +122,7 @@ async fn interruptible_patcher_routine(
     log::info!("Applying patches...");
     if let Err(e) = apply_patches(
         pending_patch_queue,
-        &webview_handle,
+        &ui_controller,
         &config,
         &cache_file_path,
         &mut patcher_thread_rx,
@@ -143,7 +140,9 @@ async fn interruptible_patcher_routine(
             }
         }
     }
-    dispatch_patching_status(&webview_handle, PatchingStatus::Ready).await;
+    ui_controller
+        .dispatch_patching_status(PatchingStatus::Ready)
+        .await;
     log::info!("Patching finished!");
 }
 
@@ -166,16 +165,14 @@ async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> 
 async fn download_patches(
     patch_url: Url,
     patch_list: ThorPatchList,
-    webview_handle: &Handle<WebViewUserData>,
+    ui_controller: &UIController,
     patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
 ) -> Result<Vec<PendingPatch>, InterruptibleFnError> {
     let patch_count = patch_list.len();
     let mut pending_patch_queue = Vec::with_capacity(patch_count);
-    dispatch_patching_status(
-        &webview_handle,
-        PatchingStatus::DownloadInProgress(0, patch_count),
-    )
-    .await;
+    ui_controller
+        .dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count))
+        .await;
     for (patch_number, patch) in patch_list.into_iter().enumerate() {
         let patch_file_url = match patch_url.join(patch.file_name.as_str()) {
             Err(_) => {
@@ -233,18 +230,19 @@ async fn download_patches(
             local_file: tmp_file,
         });
         // Update status
-        dispatch_patching_status(
-            &webview_handle,
-            PatchingStatus::DownloadInProgress(patch_number, patch_count),
-        )
-        .await;
+        ui_controller
+            .dispatch_patching_status(PatchingStatus::DownloadInProgress(
+                patch_number,
+                patch_count,
+            ))
+            .await;
     }
     Ok(pending_patch_queue)
 }
 
 async fn apply_patches<P: AsRef<Path>>(
     pending_patch_queue: Vec<PendingPatch>,
-    webview_handle: &Handle<WebViewUserData>,
+    ui_controller: &UIController,
     config: &PatcherConfiguration,
     cache_file_path: P,
     patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
@@ -259,11 +257,9 @@ async fn apply_patches<P: AsRef<Path>>(
         Ok(v) => v,
     };
     let patch_count = pending_patch_queue.len();
-    dispatch_patching_status(
-        &webview_handle,
-        PatchingStatus::InstallationInProgress(0, patch_count),
-    )
-    .await;
+    ui_controller
+        .dispatch_patching_status(PatchingStatus::InstallationInProgress(0, patch_count))
+        .await;
     for (patch_number, pending_patch) in pending_patch_queue.into_iter().enumerate() {
         // Cancel the patching process if we've been asked to
         if let Some(i) = check_for_cancellation(patching_thread_rx) {
@@ -325,38 +321,12 @@ async fn apply_patches<P: AsRef<Path>>(
             log::warn!("Failed to write cache file: {}.", e);
         }
         // Update status
-        dispatch_patching_status(
-            &webview_handle,
-            PatchingStatus::InstallationInProgress(patch_number, patch_count),
-        )
-        .await;
+        ui_controller
+            .dispatch_patching_status(PatchingStatus::InstallationInProgress(
+                patch_number,
+                patch_count,
+            ))
+            .await;
     }
     Ok(())
-}
-
-async fn dispatch_patching_status(
-    webview_handle: &Handle<WebViewUserData>,
-    status: PatchingStatus,
-) {
-    if let Err(e) = webview_handle.dispatch(move |webview| {
-        let result = match status {
-            PatchingStatus::Ready => webview.eval("patchingStatusReady()"),
-            PatchingStatus::Error(msg) => {
-                webview.eval(&format!("patchingStatusError(\"{}\")", msg))
-            }
-            PatchingStatus::DownloadInProgress(nb_downloaded, nb_total) => webview.eval(&format!(
-                "patchingStatusDownloading({}, {})",
-                nb_downloaded, nb_total
-            )),
-            PatchingStatus::InstallationInProgress(nb_installed, nb_total) => webview.eval(
-                &format!("patchingStatusInstalling({}, {})", nb_installed, nb_total),
-            ),
-        };
-        if let Err(e) = result {
-            log::warn!("Failed to dispatch patching status: {}.", e);
-        }
-        Ok(())
-    }) {
-        log::warn!("Failed to dispatch patching status: {}.", e);
-    }
 }
