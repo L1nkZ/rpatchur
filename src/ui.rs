@@ -25,7 +25,7 @@ impl WebViewUserData {
 impl Drop for WebViewUserData {
     fn drop(&mut self) {
         // Ask the patching thread to stop whenever WebViewUserData is dropped
-        let _res = self.patching_thread_tx.try_send(PatcherCommand::Exit);
+        let _res = self.patching_thread_tx.try_send(PatcherCommand::Cancel);
     }
 }
 

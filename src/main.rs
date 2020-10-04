@@ -25,7 +25,7 @@ fn main() {
     let (tx, rx) = mpsc::channel::<PatcherCommand>(8);
     let webview = ui::build_webview(WebViewUserData::new(config.clone(), tx))
         .expect("Failed to build a web view");
-    let patching_task = tokio_rt.spawn(patcher_thread_routine(webview.handle(), rx, config));
+    let patching_task = tokio_rt.spawn(patcher_thread_routine(webview.handle(), config, rx));
     webview.run().unwrap();
     // Join the patching task from our synchronous function
     tokio_rt.block_on(async {

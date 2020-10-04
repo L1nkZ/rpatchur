@@ -1,4 +1,5 @@
 mod cache;
+mod cancellation;
 mod config;
 mod core;
 mod patching;
@@ -12,7 +13,6 @@ pub use self::core::patcher_thread_routine;
 pub enum PatcherCommand {
     Start,
     Cancel, // Canceled by the user
-    Exit,   // Program is exiting
 }
 
 pub fn get_patcher_name() -> Option<OsString> {

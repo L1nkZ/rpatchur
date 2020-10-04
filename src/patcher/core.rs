@@ -1,14 +1,15 @@
 use std::env;
+use std::fs::File;
+use std::io::Write;
 use std::io::{prelude::Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use super::cache::{read_cache_file, write_cache_file, PatcherCache};
+use super::cancellation::{check_for_cancellation, wait_for_cancellation, InterruptibleFnError};
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::thor::{self, ThorArchive, ThorPatchList};
 use crate::ui::WebViewUserData;
-use std::fs::File;
-use std::io::Write;
 use tokio::sync::mpsc;
 use url::Url;
 use web_view::Handle;
@@ -26,44 +27,45 @@ enum PatchingStatus {
     InstallationInProgress(usize, usize), // Installed, Total
 }
 
-enum Interruption {
-    Cancel, // Cancel current task
-    Exit,   // Kill the worker
-}
-enum InterruptibleFnError {
-    Err(String),               // An actual error
-    Interrupted(Interruption), // An interruption
-}
-
 pub async fn patcher_thread_routine(
     webview_handle: Handle<WebViewUserData>,
-    mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
     config: PatcherConfiguration,
+    mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
 ) {
     log::trace!("Patching thread started.");
+    log::trace!("Waiting for start command");
+    if let Err(e) = wait_for_start_command(&mut patcher_thread_rx).await {
+        log::error!("Failed to wait for start command: {}", e);
+        return;
+    }
+
+    interruptible_patcher_routine(webview_handle, config, patcher_thread_rx).await
+}
+
+async fn wait_for_start_command(rx: &mut mpsc::Receiver<PatcherCommand>) -> Result<(), String> {
+    loop {
+        match rx.recv().await {
+            None => return Err("Channel has been closed".to_string()),
+            Some(v) => match v {
+                PatcherCommand::Cancel => return Err("Cancel command received".to_string()),
+                PatcherCommand::Start => break,
+            },
+        }
+    }
+    Ok(())
+}
+
+async fn interruptible_patcher_routine(
+    webview_handle: Handle<WebViewUserData>,
+    config: PatcherConfiguration,
+    mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
+) {
+    log::info!("Patching started");
+    // Declare a utility function for dispatching errors to the UI as well as to the logger
     let report_error = |err_msg| async {
         log::error!("{}", err_msg);
         dispatch_patching_status(&webview_handle, PatchingStatus::Error(err_msg)).await;
     };
-
-    log::trace!("Waiting for commands");
-    loop {
-        match patcher_thread_rx.recv().await {
-            None => {
-                log::error!("Channel has been closed");
-                return;
-            }
-            Some(v) => match v {
-                PatcherCommand::Start => break,
-                PatcherCommand::Exit => {
-                    log::info!("Exit command received");
-                    return;
-                }
-                _ => {}
-            },
-        }
-    }
-    log::info!("Patching started");
 
     let patch_list_url = Url::parse(config.web.plist_url.as_str()).unwrap();
     let mut patch_list = match fetch_patch_list(patch_list_url).await {
@@ -110,16 +112,10 @@ pub async fn patcher_thread_routine(
                 report_error(format!("Failed to download patches: {}.", msg)).await;
                 return;
             }
-            InterruptibleFnError::Interrupted(i) => match i {
-                Interruption::Exit => {
-                    log::info!("Exit command received");
-                    return;
-                }
-                Interruption::Cancel => {
-                    report_error("Patching was canceled".to_string()).await;
-                    return;
-                }
-            },
+            InterruptibleFnError::Interrupted => {
+                report_error("Patching was canceled".to_string()).await;
+                return;
+            }
         },
         Ok(v) => v,
     };
@@ -141,66 +137,30 @@ pub async fn patcher_thread_routine(
                 report_error(format!("Failed to apply patches: {}.", msg)).await;
                 return;
             }
-            InterruptibleFnError::Interrupted(i) => match i {
-                Interruption::Exit => {
-                    log::info!("Exit command received");
-                    return;
-                }
-                Interruption::Cancel => {
-                    report_error("Patching was canceled".to_string()).await;
-                    return;
-                }
-            },
+            InterruptibleFnError::Interrupted => {
+                report_error("Patching was canceled".to_string()).await;
+                return;
+            }
         }
     }
     dispatch_patching_status(&webview_handle, PatchingStatus::Ready).await;
     log::info!("Patching finished!");
 }
 
+/// Downloads and parses the given 'plist.txt' file from its URL
 async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> {
-    let resp = match reqwest::get(patch_list_url).await {
-        Err(e) => {
-            return Err(format!("Failed to retrieve the patch list: {}", e));
-        }
-        Ok(v) => v,
-    };
+    let resp = reqwest::get(patch_list_url)
+        .await
+        .map_err(|e| format!("Failed to retrieve the patch list: {}", e))?;
     if !resp.status().is_success() {
         return Err("Patch list file not found on the remote server".to_string());
     }
-    let patch_index_content = match resp.text().await {
-        Err(_) => return Err("Invalid responde body".to_string()),
-        Ok(v) => v,
-    };
+    let patch_index_content = resp
+        .text()
+        .await
+        .map_err(|_| "Invalid responde body".to_string())?;
     log::info!("Parsing patch index...");
     Ok(thor::patch_list_from_string(patch_index_content.as_str()))
-}
-
-async fn wait_for_cancellation(
-    patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
-) -> InterruptibleFnError {
-    if let Some(cmd) = patching_thread_rx.recv().await {
-        match cmd {
-            PatcherCommand::Cancel => InterruptibleFnError::Interrupted(Interruption::Cancel),
-            PatcherCommand::Exit => InterruptibleFnError::Interrupted(Interruption::Exit),
-            _ => InterruptibleFnError::Err("Unexpected command received".to_string()),
-        }
-    } else {
-        InterruptibleFnError::Err("Channel was closed".to_string())
-    }
-}
-
-fn check_for_cancellation(
-    patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
-) -> Option<InterruptibleFnError> {
-    if let Ok(cmd) = patching_thread_rx.try_recv() {
-        match cmd {
-            PatcherCommand::Cancel => Some(InterruptibleFnError::Interrupted(Interruption::Cancel)),
-            PatcherCommand::Exit => Some(InterruptibleFnError::Interrupted(Interruption::Exit)),
-            _ => None,
-        }
-    } else {
-        None
-    }
 }
 
 async fn download_patches(
