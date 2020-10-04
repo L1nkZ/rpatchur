@@ -8,7 +8,7 @@ use super::cache::{read_cache_file, write_cache_file, PatcherCache};
 use super::cancellation::{check_for_cancellation, wait_for_cancellation, InterruptibleFnError};
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
-use crate::thor::{self, ThorArchive, ThorPatchList};
+use crate::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
 use crate::ui::{PatchingStatus, UIController};
 use tokio::sync::mpsc;
 use url::Url;
@@ -31,7 +31,14 @@ pub async fn patcher_thread_routine(
         return;
     }
 
-    interruptible_patcher_routine(ui_controller, config, patcher_thread_rx).await
+    if let Err(err_msg) =
+        interruptible_patcher_routine(&ui_controller, config, patcher_thread_rx).await
+    {
+        log::error!("{}", err_msg);
+        ui_controller
+            .dispatch_patching_status(PatchingStatus::Error(err_msg))
+            .await;
+    }
 }
 
 /// Returns when a start command is received, ignoring all other commands that might be received.
@@ -51,37 +58,20 @@ async fn wait_for_start_command(rx: &mut mpsc::Receiver<PatcherCommand>) -> Resu
 }
 
 async fn interruptible_patcher_routine(
-    ui_controller: UIController,
+    ui_controller: &UIController,
     config: PatcherConfiguration,
     mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
-) {
+) -> Result<(), String> {
     log::info!("Patching started");
-    // Declare a utility function for dispatching errors to the UI as well as to the logger
-    let report_error = |err_msg| async {
-        log::error!("{}", err_msg);
-        ui_controller
-            .dispatch_patching_status(PatchingStatus::Error(err_msg))
-            .await;
-    };
-
     let patch_list_url = Url::parse(config.web.plist_url.as_str()).unwrap();
-    let mut patch_list = match fetch_patch_list(patch_list_url).await {
-        Err(e) => {
-            report_error(format!("Failed to retrieve the patch list: {}.", e)).await;
-            return;
-        }
-        Ok(v) => v,
-    };
+    let mut patch_list = fetch_patch_list(patch_list_url)
+        .await
+        .map_err(|e| format!("Failed to retrieve the patch list: {}.", e))?;
     log::info!("Successfully fetched patch list: {:?}", patch_list);
 
     // Try to read cache
-    let cache_file_path = match get_patcher_name() {
-        Some(patcher_name) => PathBuf::from(patcher_name).with_extension("dat"),
-        None => {
-            report_error("Failed to resolve patcher name.".to_string()).await;
-            return;
-        }
-    };
+    let cache_file_path =
+        get_cache_file_path().ok_or_else(|| "Failed to resolve patcher name.".to_string())?;
     if let Ok(patcher_cache) = read_cache_file(&cache_file_path).await {
         // Ignore already applied patches if needed
         // First we verify that our cached index looks relevant
@@ -96,54 +86,39 @@ async fn interruptible_patcher_routine(
     // Try fetching patch files
     log::info!("Downloading patches... ");
     let patch_url = Url::parse(config.web.patch_url.as_str()).unwrap();
-    let pending_patch_queue = match download_patches(
+    let pending_patch_queue = download_patches(
         patch_url,
         patch_list,
         &ui_controller,
         &mut patcher_thread_rx,
     )
     .await
-    {
-        Err(e) => match e {
-            InterruptibleFnError::Err(msg) => {
-                report_error(format!("Failed to download patches: {}.", msg)).await;
-                return;
-            }
-            InterruptibleFnError::Interrupted => {
-                report_error("Patching was canceled".to_string()).await;
-                return;
-            }
-        },
-        Ok(v) => v,
-    };
+    .map_err(|e| match e {
+        InterruptibleFnError::Err(msg) => format!("Failed to download patches: {}.", msg),
+        InterruptibleFnError::Interrupted => "Patching was canceled".to_string(),
+    })?;
     log::info!("Done");
 
     // Proceed with actual patching
     log::info!("Applying patches...");
-    if let Err(e) = apply_patches(
+    apply_patches(
         pending_patch_queue,
-        &ui_controller,
         &config,
         &cache_file_path,
+        &ui_controller,
         &mut patcher_thread_rx,
     )
     .await
-    {
-        match e {
-            InterruptibleFnError::Err(msg) => {
-                report_error(format!("Failed to apply patches: {}.", msg)).await;
-                return;
-            }
-            InterruptibleFnError::Interrupted => {
-                report_error("Patching was canceled".to_string()).await;
-                return;
-            }
-        }
-    }
+    .map_err(|e| match e {
+        InterruptibleFnError::Err(msg) => format!("Failed to apply patches: {}.", msg),
+        InterruptibleFnError::Interrupted => "Patching was canceled".to_string(),
+    })?;
+    log::info!("Done");
     ui_controller
         .dispatch_patching_status(PatchingStatus::Ready)
         .await;
     log::info!("Patching finished!");
+    Ok(())
 }
 
 /// Downloads and parses the given 'plist.txt' file from its URL
@@ -162,6 +137,14 @@ async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> 
     Ok(thor::patch_list_from_string(patch_index_content.as_str()))
 }
 
+fn get_cache_file_path() -> Option<PathBuf> {
+    if let Some(patcher_name) = get_patcher_name() {
+        Some(PathBuf::from(patcher_name).with_extension("dat"))
+    } else {
+        None
+    }
+}
+
 async fn download_patches(
     patch_url: Url,
     patch_list: ThorPatchList,
@@ -174,53 +157,17 @@ async fn download_patches(
         .dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count))
         .await;
     for (patch_number, patch) in patch_list.into_iter().enumerate() {
-        let patch_file_url = match patch_url.join(patch.file_name.as_str()) {
-            Err(_) => {
-                return Err(InterruptibleFnError::Err(format!(
-                    "Invalid file name '{}' given in patch list file.",
-                    patch.file_name
-                )));
-            }
-            Ok(v) => v,
-        };
-        let mut tmp_file = match tempfile::tempfile() {
-            Err(e) => {
-                return Err(InterruptibleFnError::Err(format!(
-                    "Failed to create temporary file: {}.",
-                    e
-                )))
-            }
-            Ok(v) => v,
-        };
-        let download_future = async {
-            let mut resp = match reqwest::get(patch_file_url).await {
-                Err(e) => {
-                    return Err(format!(
-                        "Failed to download file '{}': {}.",
-                        patch.file_name, e
-                    ))
-                }
-                Ok(v) => v,
-            };
-            if !resp.status().is_success() {
-                return Err(format!(
-                    "Patch file '{}' not found on the remote server.",
-                    patch.file_name
-                ));
-            }
-
-            while let Some(chunk) = resp.chunk().await.ok().unwrap_or(None) {
-                let _ = tmp_file
-                    .write(&chunk[..])
-                    .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e));
-            }
-            Ok(())
-        };
-        let cancel_future = wait_for_cancellation(patching_thread_rx);
+        let mut tmp_file = tempfile::tempfile().map_err(|e| {
+            InterruptibleFnError::Err(format!("Failed to create temporary file: {}.", e))
+        })?;
         // Download file in a cancelable manner
         tokio::select! {
-            cancel_res = cancel_future => return Err(cancel_res),
-            _ = download_future => {},
+            cancel_res = wait_for_cancellation(patching_thread_rx) => return Err(cancel_res),
+            download_res = download_patch(&patch_url, &patch, &mut tmp_file) => {
+                if let Err(msg) = download_res {
+                    return Err(InterruptibleFnError::Err(msg));
+                }
+            },
         }
 
         // File's been downloaded, seek to start and add it to the queue
@@ -240,30 +187,62 @@ async fn download_patches(
     Ok(pending_patch_queue)
 }
 
+async fn download_patch(
+    patch_url: &Url,
+    patch: &ThorPatchInfo,
+    tmp_file: &mut File,
+) -> Result<(), String> {
+    let patch_file_url = patch_url.join(patch.file_name.as_str()).map_err(|_| {
+        format!(
+            "Invalid file name '{}' given in patch list file.",
+            patch.file_name
+        )
+    })?;
+    let mut resp = reqwest::get(patch_file_url)
+        .await
+        .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?;
+    if !resp.status().is_success() {
+        return Err(format!(
+            "Patch file '{}' not found on the remote server.",
+            patch.file_name
+        ));
+    }
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?
+    {
+        let _ = tmp_file
+            .write_all(&chunk[..])
+            .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?;
+    }
+    tmp_file
+        .flush()
+        .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?;
+    Ok(())
+}
+
 async fn apply_patches<P: AsRef<Path>>(
     pending_patch_queue: Vec<PendingPatch>,
-    ui_controller: &UIController,
     config: &PatcherConfiguration,
     cache_file_path: P,
+    ui_controller: &UIController,
     patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
 ) -> Result<(), InterruptibleFnError> {
-    let current_working_dir = match env::current_dir() {
-        Err(e) => {
-            return Err(InterruptibleFnError::Err(format!(
-                "Failed to resolve current working directory: {}.",
-                e
-            )));
-        }
-        Ok(v) => v,
-    };
+    let current_working_dir = env::current_dir().map_err(|e| {
+        InterruptibleFnError::Err(format!(
+            "Failed to resolve current working directory: {}.",
+            e
+        ))
+    })?;
     let patch_count = pending_patch_queue.len();
     ui_controller
         .dispatch_patching_status(PatchingStatus::InstallationInProgress(0, patch_count))
         .await;
     for (patch_number, pending_patch) in pending_patch_queue.into_iter().enumerate() {
         // Cancel the patching process if we've been asked to
-        if let Some(i) = check_for_cancellation(patching_thread_rx) {
-            return Err(i);
+        if let Some(e) = check_for_cancellation(patching_thread_rx) {
+            return Err(e);
         }
         log::info!("Processing {}", pending_patch.info.file_name);
         let mut thor_archive = match ThorArchive::new(pending_patch.local_file) {
