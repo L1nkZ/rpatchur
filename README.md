@@ -9,7 +9,7 @@ RPatchur
 Screenshot
 ----------
 
-![screen](https://i.imgur.com/Rhc1Ds1.png)
+![screen](https://i.imgur.com/WzZnJV4.png)
 
 Features
 --------
