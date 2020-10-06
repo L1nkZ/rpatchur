@@ -23,7 +23,7 @@ fn main() {
     };
     // Create a channel to allow the webview's thread to communicate with the patching thread
     let (tx, rx) = mpsc::channel::<PatcherCommand>(8);
-    let webview = ui::build_webview(WebViewUserData::new(config.clone(), tx))
+    let webview = ui::build_webview("RPatchur", WebViewUserData::new(config.clone(), tx))
         .expect("Failed to build a web view");
     let patching_task = tokio_rt.spawn(patcher_thread_routine(
         UIController::new(&webview),

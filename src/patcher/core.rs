@@ -13,12 +13,18 @@ use crate::ui::{PatchingStatus, UIController};
 use tokio::sync::mpsc;
 use url::Url;
 
+/// Representation of a pending patch (a patch that's been downloaded but has
+/// not been applied yet).
 #[derive(Debug)]
 struct PendingPatch {
     info: thor::ThorPatchInfo,
     local_file: File,
 }
 
+/// Entry point of the patching task.
+///
+/// This waits for a `PatcherCommand::Start` command before starting an
+/// interruptible patching task.
 pub async fn patcher_thread_routine(
     ui_controller: UIController,
     config: PatcherConfiguration,
@@ -57,6 +63,10 @@ async fn wait_for_start_command(rx: &mut mpsc::Receiver<PatcherCommand>) -> Resu
     Ok(())
 }
 
+/// Main routine of the patching task.
+///
+/// This routine is written in a way that makes it interuptible (or cancellable)
+/// with a relatively low latency.
 async fn interruptible_patcher_routine(
     ui_controller: &UIController,
     config: PatcherConfiguration,
@@ -121,7 +131,10 @@ async fn interruptible_patcher_routine(
     Ok(())
 }
 
-/// Downloads and parses the given 'plist.txt' file from its URL
+/// Downloads and parses a 'plist.txt' file located as the URL contained in the
+/// `patch_list_url` argument.
+///
+/// Returns a vector of `ThorPatchInfo` in case of success.
 async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> {
     let resp = reqwest::get(patch_list_url)
         .await
@@ -137,6 +150,7 @@ async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> 
     Ok(thor::patch_list_from_string(patch_index_content.as_str()))
 }
 
+/// Returns the patcher cache file's name as a `PathBuf` on success.
 fn get_cache_file_path() -> Option<PathBuf> {
     if let Some(patcher_name) = get_patcher_name() {
         Some(PathBuf::from(patcher_name).with_extension("dat"))
@@ -145,6 +159,12 @@ fn get_cache_file_path() -> Option<PathBuf> {
     }
 }
 
+/// Downloads a list of patches (described with a `ThorPatchList`).
+///
+/// Files are downloaded from the remote directory located at the URL
+/// contained in the 'patch_url' argument.
+///
+/// This function is interruptible.
 async fn download_patches(
     patch_url: Url,
     patch_list: ThorPatchList,
@@ -187,6 +207,7 @@ async fn download_patches(
     Ok(pending_patch_queue)
 }
 
+/// Downloads a single patch described with a `ThorPatchInfo`.
 async fn download_patch(
     patch_url: &Url,
     patch: &ThorPatchInfo,
@@ -222,6 +243,10 @@ async fn download_patch(
     Ok(())
 }
 
+/// Parses and applies a list of patches to GRFs and/or to the game client's
+/// files.
+///
+/// This function is interruptible.
 async fn apply_patches<P: AsRef<Path>>(
     pending_patch_queue: Vec<PendingPatch>,
     config: &PatcherConfiguration,

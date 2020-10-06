@@ -7,6 +7,7 @@ use futures::executor::block_on;
 use tokio::sync::mpsc;
 use web_view::{Content, Handle, WebView};
 
+/// 'Opaque" struct that can be used to update the UI.
 pub struct UIController {
     web_view_handle: Handle<WebViewUserData>,
 }
@@ -17,6 +18,9 @@ impl UIController {
         }
     }
 
+    /// Allows another thread to indicate the current status of the patching process.
+    ///
+    /// This updates the UI with useful information.
     pub async fn dispatch_patching_status(&self, status: PatchingStatus) {
         if let Err(e) = self.web_view_handle.dispatch(move |webview| {
             let result = match status {
@@ -41,6 +45,7 @@ impl UIController {
     }
 }
 
+/// Used to indicate the current status of the patching process.
 pub enum PatchingStatus {
     Ready,
     Error(String),                        // Error message
@@ -70,11 +75,13 @@ impl Drop for WebViewUserData {
     }
 }
 
+/// Creates a `WebView` object with the appropriate settings for our needs.
 pub fn build_webview<'a>(
+    window_title: &'a str,
     user_data: WebViewUserData,
 ) -> web_view::WVResult<WebView<'a, WebViewUserData>> {
     web_view::builder()
-        .title("RPatchur")
+        .title(window_title)
         .content(Content::Url(user_data.patcher_config.web.index_url.clone()))
         .size(
             user_data.patcher_config.window.width,
@@ -97,7 +104,9 @@ pub fn build_webview<'a>(
         .build()
 }
 
-/// Opens the configured client with arguments, if needed
+/// Opens the configured game client with the configured arguments.
+///
+/// This function can create elevated processes on Windows with UAC activated.
 fn handle_play(webview: &mut WebView<WebViewUserData>) {
     let client_exe: &String = &webview.user_data().patcher_config.play.path;
     let client_argument: &String = &webview.user_data().patcher_config.play.argument;
@@ -119,7 +128,9 @@ fn handle_play(webview: &mut WebView<WebViewUserData>) {
     }
 }
 
-/// Opens the configured 'Setup' software
+/// Opens the configured 'Setup' software with the configured arguments.
+///
+/// This function can create elevated processes on Windows with UAC activated.
 fn handle_setup(webview: &mut WebView<WebViewUserData>) {
     let setup_exe: &String = &webview.user_data().patcher_config.setup.path;
     let setup_argument: &String = &webview.user_data().patcher_config.setup.argument;
@@ -141,12 +152,12 @@ fn handle_setup(webview: &mut WebView<WebViewUserData>) {
     }
 }
 
-/// Exits the patcher cleanly
+/// Exits the patcher cleanly.
 fn handle_exit(webview: &mut WebView<WebViewUserData>) {
     webview.exit();
 }
 
-/// Starts the update process
+/// Starts the patching task/thread.
 fn handle_start_update(webview: &mut WebView<WebViewUserData>) {
     if block_on(
         webview
@@ -160,7 +171,7 @@ fn handle_start_update(webview: &mut WebView<WebViewUserData>) {
     }
 }
 
-/// Cancels the update process
+/// Cancels the patching task/thread.
 fn handle_cancel_update(webview: &mut WebView<WebViewUserData>) {
     if block_on(
         webview
@@ -174,7 +185,8 @@ fn handle_cancel_update(webview: &mut WebView<WebViewUserData>) {
     }
 }
 
-/// Resets the cache used to keep track of already applied patches
+/// Resets the patcher cache (which is used to keep track of already applied
+/// patches).
 fn handle_reset_cache(_webview: &mut WebView<WebViewUserData>) {
     if let Some(patcher_name) = get_patcher_name() {
         let cache_file_path = PathBuf::from(patcher_name).with_extension("dat");
@@ -184,7 +196,7 @@ fn handle_reset_cache(_webview: &mut WebView<WebViewUserData>) {
     }
 }
 
-// Taken from the rustup project
+// Note: Taken from the rustup project
 #[cfg(windows)]
 mod windows {
     use std::ffi::OsStr;
@@ -206,8 +218,8 @@ mod windows {
         inner(s.as_ref())
     }
 
-    // This function is required to start processes that require elevation from
-    // a non-elevated process
+    /// This function is required to start processes that require elevation, from
+    /// a non-elevated process.
     pub fn spawn_elevated_win32_process<S: AsRef<OsStr>>(
         path: S,
         parameter: S,

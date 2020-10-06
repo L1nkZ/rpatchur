@@ -7,16 +7,20 @@ use std::path::{Path, PathBuf};
 use crate::grf::{GrfArchive, GrfArchiveBuilder};
 use crate::thor::{ThorArchive, ThorFileEntry};
 
+/// Indicates the method that should be used when patching GRF files.
 pub enum GrfPatchingMethod {
     OutOfPlace,
     InPlace,
 }
 
+/// Indicates the type of archive a "file" comes from.
 enum MergeEntrySource {
     GrfArchive,
     ThorArchive,
 }
 
+/// Indicates the transformation that should be applied to the data when copied
+/// from a GRF file to another.
 enum DataTransformation {
     None,
     // DecompressZlib,
@@ -29,6 +33,7 @@ struct MergeEntry {
     pub transformation: DataTransformation,
 }
 
+/// Patches a GRF file with a THOR archive/patch.
 pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
     patching_method: GrfPatchingMethod,
     grf_file_path: P,
@@ -41,7 +46,9 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
 }
 
 /// Patches a GRF in an in-place manner.
-/// Faster but produce output of bigger size and can corrupt file in case of error.
+///
+/// This is faster but produces output of bigger size and can corrupt file in
+/// case of error.
 fn apply_patch_to_grf_ip<P: AsRef<Path>, R: Read + Seek>(
     grf_file_path: P,
     thor_archive: &mut ThorArchive<R>,
@@ -59,7 +66,8 @@ fn apply_patch_to_grf_ip<P: AsRef<Path>, R: Read + Seek>(
 }
 
 /// Patches a GRF in an out-of-place manner.
-/// Safer and produce output of smaller size but slower.
+///
+/// This is safer and produces output of smaller size but slower.
 fn apply_patch_to_grf_oop<P: AsRef<Path>, R: Read + Seek>(
     grf_file_path: P,
     thor_archive: &mut ThorArchive<R>,
@@ -123,6 +131,8 @@ fn apply_patch_to_grf_oop<P: AsRef<Path>, R: Read + Seek>(
     fs::remove_file(backup_file_path)
 }
 
+/// Patches files located in the game client's directory with a THOR
+/// archive/patch.
 pub fn apply_patch_to_disk<P: AsRef<Path>, R: Read + Seek>(
     root_directory: P,
     thor_archive: &mut ThorArchive<R>,
@@ -147,6 +157,8 @@ pub fn apply_patch_to_disk<P: AsRef<Path>, R: Read + Seek>(
     Ok(())
 }
 
+/// Utility function used to join path-like segments the same way it's done in
+/// the GRF file format (Windows style).
 fn join_windows_relative_path(path: &Path, windows_relative_path: &str) -> PathBuf {
     let mut result = PathBuf::from(path);
     for component in windows_relative_path.split('\\') {
