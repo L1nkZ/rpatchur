@@ -144,7 +144,8 @@ pub fn apply_patch_to_disk<P: AsRef<Path>, R: Read + Seek>(
     for entry in file_entries {
         let dest_path = join_windows_relative_path(root_directory.as_ref(), &entry.relative_path);
         if entry.is_removed {
-            fs::remove_file(dest_path)?;
+            // Try to remove file and ignore errors (file might not exist)
+            let _ignore = fs::remove_file(dest_path);
         } else if !entry.is_internal() {
             // Create parent directory if needed
             if let Some(parent_dir) = dest_path.parent() {
