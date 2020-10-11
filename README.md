@@ -29,6 +29,11 @@ Known Limitations
 * Cannot auto-update
 * No support for RGZ/GPF patch formats
 
+Documentation
+-------------
+
+You can find the project's documentation [here](https://l1nkz.github.io/rpatchur/).
+
 Examples
 --------
 
