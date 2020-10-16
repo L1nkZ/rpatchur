@@ -138,7 +138,7 @@ async fn interruptible_patcher_routine(
 async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> {
     let resp = reqwest::get(patch_list_url)
         .await
-        .map_err(|e| format!("Failed to retrieve the patch list: {}", e))?;
+        .map_err(|e| format!("Failed to GET URL: {}", e))?;
     if !resp.status().is_success() {
         return Err("Patch list file not found on the remote server".to_string());
     }
@@ -183,7 +183,7 @@ async fn download_patches(
         // Download file in a cancelable manner
         tokio::select! {
             cancel_res = wait_for_cancellation(patching_thread_rx) => return Err(cancel_res),
-            download_res = download_patch(&patch_url, &patch, &mut tmp_file) => {
+            download_res = download_patch_to_file(&patch_url, &patch, &mut tmp_file) => {
                 if let Err(msg) = download_res {
                     return Err(InterruptibleFnError::Err(msg));
                 }
@@ -208,7 +208,7 @@ async fn download_patches(
 }
 
 /// Downloads a single patch described with a `ThorPatchInfo`.
-async fn download_patch(
+async fn download_patch_to_file(
     patch_url: &Url,
     patch: &ThorPatchInfo,
     tmp_file: &mut File,
@@ -237,9 +237,12 @@ async fn download_patch(
             .write_all(&chunk[..])
             .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?;
     }
-    tmp_file
-        .flush()
-        .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?;
+    tmp_file.sync_all().map_err(|e| {
+        format!(
+            "Failed to sync downloaded file '{}': {}.",
+            patch.file_name, e
+        )
+    })?;
     Ok(())
 }
 
@@ -333,4 +336,49 @@ async fn apply_patches<P: AsRef<Path>>(
             .await;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use httptest::{matchers::*, responders::*, Expectation, Server};
+    use std::io::Read;
+
+    #[tokio::test]
+    async fn test_download_path_to_file() {
+        // Generate 200MiB of data
+        let data_size: usize = 200 * 1024 * 1024;
+        let body_content: Vec<u8> = (0..data_size).map(|x| x as u8).collect();
+
+        let patch_name = "patch_archive";
+        let patch_path = format!("/{}", patch_name);
+        // Setup a local web server
+        let server = Server::run();
+        // Configure the server to expect a single GET request and respond
+        // with a 200 status code.
+        server.expect(
+            Expectation::matching(request::method_path("GET", patch_path.clone()))
+                .respond_with(status_code(200).body(body_content.clone())),
+        );
+
+        // "Download" the file
+        let from_url = Url::parse(server.url("/").to_string().as_str()).unwrap();
+        let patch_info = ThorPatchInfo {
+            index: 0,
+            file_name: patch_name.to_string(),
+        };
+        let mut tmp_file = tempfile::tempfile().unwrap();
+        download_patch_to_file(&from_url, &patch_info, &mut tmp_file)
+            .await
+            .unwrap();
+
+        tmp_file.seek(SeekFrom::Start(0)).unwrap();
+        let mut file_content = Vec::with_capacity(data_size);
+        tmp_file.read_to_end(&mut file_content).unwrap();
+        // Size check
+        assert_eq!(data_size as u64, tmp_file.metadata().unwrap().len());
+        assert_eq!(data_size, file_content.len());
+        // Content check
+        assert_eq!(body_content, file_content);
+    }
 }
