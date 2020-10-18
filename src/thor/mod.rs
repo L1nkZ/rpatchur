@@ -178,26 +178,21 @@ impl<R: Read + Seek> ThorArchive<R> {
     }
 
     /// Checks if the container has been unintentionnaly corrupted
-    pub fn is_valid(&mut self) -> bool {
-        let integrity_data = match self.read_file_content(INTEGRITY_FILE_NAME) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
-        let integrity_data_as_str = match string_from_win_1252(integrity_data.as_slice()) {
-            Ok(v) => v,
-            Err(_) => return false,
-        };
+    pub fn is_valid(&mut self) -> io::Result<bool> {
+        let integrity_data = self.read_file_content(INTEGRITY_FILE_NAME)?;
+        let integrity_data_as_str = string_from_win_1252(integrity_data.as_slice())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
         let integrity_info = parse_data_integrity_info(integrity_data_as_str.as_str());
         for (file_path, hash) in integrity_info {
             let file_content = match self.read_file_content(file_path) {
                 Ok(v) => v,
-                Err(_) => return false,
+                Err(_) => return Ok(false),
             };
             if crc32::checksum_ieee(file_content.as_slice()) != hash {
-                return false;
+                return Ok(false);
             }
         }
-        true
+        Ok(true)
     }
 }
 
@@ -528,7 +523,7 @@ mod tests {
             assert_eq!(thor_archive.target_grf_name(), "");
             assert!(thor_archive.use_grf_merging());
             check_tiny_thor_entries(&mut thor_archive);
-            assert!(thor_archive.is_valid());
+            assert!(thor_archive.is_valid().unwrap());
         }
         {
             let thor_file_path = thor_dir_path.join("small.thor");
@@ -536,7 +531,7 @@ mod tests {
             assert_eq!(thor_archive.file_count(), 16);
             assert_eq!(thor_archive.target_grf_name(), "data.grf");
             assert!(thor_archive.use_grf_merging());
-            assert!(thor_archive.is_valid());
+            assert!(thor_archive.is_valid().unwrap());
         }
     }
 }

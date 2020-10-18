@@ -1,7 +1,6 @@
 use std::env;
 use std::fs::File;
-use std::io::Write;
-use std::io::{prelude::Seek, SeekFrom};
+use std::io::{self, prelude::Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use super::cache::{read_cache_file, write_cache_file, PatcherCache};
@@ -99,6 +98,7 @@ async fn interruptible_patcher_routine(
     let pending_patch_queue = download_patches(
         patch_url,
         patch_list,
+        config.patching.check_integrity,
         &ui_controller,
         &mut patcher_thread_rx,
     )
@@ -168,6 +168,7 @@ fn get_cache_file_path() -> Option<PathBuf> {
 async fn download_patches(
     patch_url: Url,
     patch_list: ThorPatchList,
+    ensure_integrity: bool,
     ui_controller: &UIController,
     patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
 ) -> Result<Vec<PendingPatch>, InterruptibleFnError> {
@@ -188,6 +189,37 @@ async fn download_patches(
                     return Err(InterruptibleFnError::Err(msg));
                 }
             },
+        }
+
+        // Check the archive's integrity if required
+        if ensure_integrity {
+            let _ = tmp_file.seek(SeekFrom::Start(0));
+            let mut archive = ThorArchive::new(&tmp_file).map_err(|e| {
+                InterruptibleFnError::Err(format!("Failed to check archive's integrity: {}", e))
+            })?;
+            match archive.is_valid() {
+                Err(e) => {
+                    if let io::ErrorKind::NotFound = e.kind() {
+                    } else {
+                        // Only consider this an error if the integrity file was found
+                        return Err(InterruptibleFnError::Err(format!(
+                            "'{}' archive's integrity file is invalid: {}",
+                            patch.file_name,
+                            e.to_string(),
+                        )));
+                    }
+                }
+                Ok(false) => {
+                    // Integrity check failed
+                    return Err(InterruptibleFnError::Err(format!(
+                        "Archive '{}' is corrupt",
+                        patch.file_name
+                    )));
+                }
+                Ok(true) => {
+                    // Archive's fine
+                }
+            }
         }
 
         // File's been downloaded, seek to start and add it to the queue

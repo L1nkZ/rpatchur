@@ -49,8 +49,8 @@ pub struct ClientConfiguration {
 
 #[derive(Deserialize, Clone)]
 pub struct PatchingConfiguration {
-    pub in_place: bool, // In-place GRF patching
-                        // pub check_integrity: bool,
+    pub in_place: bool,        // In-place GRF patching
+    pub check_integrity: bool, // Check THOR archives' integrity
 }
 
 pub fn retrieve_patcher_configuration() -> Option<PatcherConfiguration> {
