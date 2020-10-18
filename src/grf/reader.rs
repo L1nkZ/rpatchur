@@ -178,6 +178,10 @@ impl GrfArchive {
             Some(v) => v.clone(),
             None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
+        if file_entry.size == 0 {
+            return Ok(vec![]);
+        }
+
         self.obj.seek(SeekFrom::Start(file_entry.offset))?;
         let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed_aligned);
         let mut file_chunk = self.obj.by_ref().take(content.capacity() as u64);
@@ -190,6 +194,10 @@ impl GrfArchive {
             Some(v) => v.clone(),
             None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
+        if file_entry.size == 0 {
+            return Ok(vec![]);
+        }
+
         self.obj.seek(SeekFrom::Start(file_entry.offset))?;
         let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed_aligned);
         let mut file_chunk = self.obj.by_ref().take(content.capacity() as u64);

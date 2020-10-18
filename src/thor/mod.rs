@@ -130,6 +130,10 @@ impl<R: Read + Seek> ThorArchive<R> {
             Some(v) => v.clone(),
             None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
+        if file_entry.size_compressed == 0 {
+            return Ok(vec![]);
+        }
+
         self.obj.seek(SeekFrom::Start(file_entry.offset))?;
         let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
         let mut file_chunk = self.obj.by_ref().take(content.capacity() as u64);
@@ -142,6 +146,10 @@ impl<R: Read + Seek> ThorArchive<R> {
             Some(v) => v.clone(),
             None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
         };
+        if file_entry.size_compressed == 0 {
+            return Ok(vec![]);
+        }
+
         self.obj.seek(SeekFrom::Start(file_entry.offset))?;
         let mut content: Vec<u8> = Vec::with_capacity(file_entry.size_compressed);
         let mut file_chunk = self.obj.by_ref().take(content.capacity() as u64);
@@ -483,11 +491,15 @@ mod tests {
     fn test_open_thor_container() {
         let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
         {
-            let thor_file_path = thor_dir_path.join("single.thor");
+            let thor_file_path = thor_dir_path.join("dir1.thor");
             let mut thor_archive = ThorArchive::open(&thor_file_path).unwrap();
             assert_eq!(thor_archive.file_count(), 1);
             assert_eq!(thor_archive.target_grf_name(), "");
             assert!(!thor_archive.use_grf_merging());
+            assert_eq!(
+                thor_archive.is_valid().unwrap_err().kind(),
+                std::io::ErrorKind::NotFound
+            );
             let entry = thor_archive.get_entries().next().unwrap();
             assert_eq!(entry.offset, 52);
             assert_eq!(entry.size, 22528);
@@ -495,6 +507,37 @@ mod tests {
             assert!(!entry.is_removed);
             assert_eq!(entry.relative_path, "client.exe");
             let _content = thor_archive.read_file_content("client.exe").unwrap();
+        }
+        {
+            let expected_content: HashMap<&str, usize> = [
+                ("ASPLnchr.exe", 248568),
+                ("savedata\\MiniPartyInfo.lua", 0),
+                ("savedata\\OptionInfo.lua", 2703),
+                ("savedata\\UserKeys.lua", 20),
+            ]
+            .iter()
+            .cloned()
+            .collect();
+            let check_dir2_thor_entries = |thor: &mut ThorArchive<File>| {
+                let file_entries: Vec<ThorFileEntry> = thor.get_entries().cloned().collect();
+                for file_entry in file_entries {
+                    let file_path: &str = &file_entry.relative_path[..];
+                    assert!(expected_content.contains_key(file_path));
+                    let expected_size = expected_content[file_path];
+                    assert_eq!(file_entry.size, expected_size);
+                    let _content = thor.read_file_content(file_path).unwrap();
+                }
+            };
+            let thor_file_path = thor_dir_path.join("dir2.thor");
+            let mut thor_archive = ThorArchive::open(&thor_file_path).unwrap();
+            assert_eq!(thor_archive.file_count(), expected_content.len());
+            assert_eq!(thor_archive.target_grf_name(), "");
+            assert!(!thor_archive.use_grf_merging());
+            assert_eq!(
+                thor_archive.is_valid().unwrap_err().kind(),
+                std::io::ErrorKind::NotFound
+            );
+            check_dir2_thor_entries(&mut thor_archive);
         }
         {
             let expected_content: HashMap<&str, usize> = [
