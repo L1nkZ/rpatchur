@@ -67,6 +67,8 @@ Here's a description of each field used in the configuration file.
   * `in_place` *(bool)*: When set to `true`, GRFs are patched without creating
   new files. Setting this parameter to `false` makes patching slower but it
   reduces the risk of file corruption, in case of failure.
+  * `check_integrity` *(bool)*: Enforce integrity checks on downloaded THOR
+  patches before applying them.
 
 ### User Interface
 
