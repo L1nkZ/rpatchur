@@ -22,6 +22,7 @@
 	},
 	"patching": {
 		"in_place": true,
-		"check_integrity": true
+		"check_integrity": true,
+		"create_grf": true
 	}
 }

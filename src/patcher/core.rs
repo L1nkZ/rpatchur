@@ -304,49 +304,41 @@ async fn apply_patches<P: AsRef<Path>>(
         if let Some(e) = check_for_cancellation(patching_thread_rx) {
             return Err(e);
         }
-        log::info!("Processing {}", pending_patch.info.file_name);
-        let mut thor_archive = match ThorArchive::new(pending_patch.local_file) {
-            Err(e) => {
-                return Err(InterruptibleFnError::Err(format!(
-                    "Cannot read '{}': {}.",
-                    pending_patch.info.file_name, e
-                )));
-            }
-            Ok(v) => v,
-        };
+        let patch_name = pending_patch.info.file_name;
+        log::info!("Processing {}", patch_name);
+        let mut thor_archive = ThorArchive::new(pending_patch.local_file).map_err(|e| {
+            InterruptibleFnError::Err(format!("Cannot read '{}': {}.", patch_name, e))
+        })?;
 
         if thor_archive.use_grf_merging() {
             // Patch GRF file
-            let patch_target_grf_name = {
+            let target_grf_name = {
                 if thor_archive.target_grf_name().is_empty() {
                     config.client.default_grf_name.clone()
                 } else {
                     thor_archive.target_grf_name()
                 }
             };
-            log::trace!("Target GRF: {:?}", patch_target_grf_name);
+            log::trace!("Target GRF: {:?}", target_grf_name);
             let grf_patching_method = match config.patching.in_place {
                 true => GrfPatchingMethod::InPlace,
                 false => GrfPatchingMethod::OutOfPlace,
             };
-            if let Err(e) = apply_patch_to_grf(
+            let target_grf_path = current_working_dir.join(&target_grf_name);
+            apply_patch_to_grf(
                 grf_patching_method,
-                current_working_dir.join(&patch_target_grf_name),
+                config.patching.create_grf,
+                target_grf_path,
                 &mut thor_archive,
-            ) {
-                return Err(InterruptibleFnError::Err(format!(
-                    "Failed to patch '{}': {}.",
-                    patch_target_grf_name, e
-                )));
-            }
+            )
+            .map_err(|e| {
+                InterruptibleFnError::Err(format!("Failed to patch '{}': {}.", target_grf_name, e))
+            })?;
         } else {
             // Patch root directory
-            if let Err(e) = apply_patch_to_disk(&current_working_dir, &mut thor_archive) {
-                return Err(InterruptibleFnError::Err(format!(
-                    "Failed to apply patch '{}': {}.",
-                    pending_patch.info.file_name, e
-                )));
-            }
+            apply_patch_to_disk(&current_working_dir, &mut thor_archive).map_err(|e| {
+                InterruptibleFnError::Err(format!("Failed to apply patch '{}': {}.", patch_name, e))
+            })?;
         }
         // Update the cache file with the last successful patch's index
         if let Err(e) = write_cache_file(

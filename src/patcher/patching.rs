@@ -36,9 +36,15 @@ struct MergeEntry {
 /// Patches a GRF file with a THOR archive/patch.
 pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
     patching_method: GrfPatchingMethod,
+    create_if_needed: bool,
     grf_file_path: P,
     thor_archive: &mut ThorArchive<R>,
 ) -> io::Result<()> {
+    if !grf_file_path.as_ref().exists() && create_if_needed {
+        // Create a new GRF file if needed
+        let new_grf = fs::File::create(&grf_file_path)?;
+        GrfArchiveBuilder::create(new_grf, 2, 0)?;
+    }
     match patching_method {
         GrfPatchingMethod::InPlace => apply_patch_to_grf_ip(grf_file_path, thor_archive),
         GrfPatchingMethod::OutOfPlace => apply_patch_to_grf_oop(grf_file_path, thor_archive),
@@ -214,7 +220,6 @@ mod tests {
         // Empty GRF
         {
             let temp_dir = tempdir().unwrap();
-
             let thor_archive_path = thor_dir_path.join("small.thor");
             let grf_archive_path = temp_dir.path().join("empty.grf");
             fs::copy(grf_dir_path.join("200-empty.grf"), &grf_archive_path).unwrap();
@@ -229,6 +234,7 @@ mod tests {
             let nb_of_added_files = thor_archive.file_count() - 1;
             apply_patch_to_grf(
                 GrfPatchingMethod::InPlace,
+                false,
                 &grf_archive_path,
                 &mut thor_archive,
             )
@@ -240,6 +246,28 @@ mod tests {
             assert_eq!(grf_archive.version_major(), grf_version_major);
             assert_eq!(grf_archive.version_minor(), grf_version_minor);
         }
+        // Create GRF
+        {
+            let temp_dir = tempdir().unwrap();
+            let grf_archive_path = temp_dir.path().join("empty.grf");
+            let thor_archive_path = thor_dir_path.join("small.thor");
+
+            let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
+            let nb_of_added_files = thor_archive.file_count() - 1;
+            apply_patch_to_grf(
+                GrfPatchingMethod::InPlace,
+                true,
+                &grf_archive_path,
+                &mut thor_archive,
+            )
+            .unwrap();
+
+            // After patching
+            let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
+            assert_eq!(nb_of_added_files, grf_archive.file_count());
+            assert_eq!(grf_archive.version_major(), 2);
+            assert_eq!(grf_archive.version_minor(), 0);
+        }
         // TODO(LinkZ): Non-empty GRF patching
     }
 
@@ -250,7 +278,6 @@ mod tests {
         // Empty GRF
         {
             let temp_dir = tempdir().unwrap();
-
             let thor_archive_path = thor_dir_path.join("small.thor");
             let grf_archive_path = temp_dir.path().join("empty.grf");
             fs::copy(grf_dir_path.join("200-empty.grf"), &grf_archive_path).unwrap();
@@ -265,6 +292,7 @@ mod tests {
             let nb_of_added_files = thor_archive.file_count() - 1;
             apply_patch_to_grf(
                 GrfPatchingMethod::OutOfPlace,
+                false,
                 &grf_archive_path,
                 &mut thor_archive,
             )
@@ -275,6 +303,28 @@ mod tests {
             assert_eq!(nb_of_added_files, grf_archive.file_count());
             assert_eq!(grf_archive.version_major(), grf_version_major);
             assert_eq!(grf_archive.version_minor(), grf_version_minor);
+        }
+        // Create GRF
+        {
+            let temp_dir = tempdir().unwrap();
+            let thor_archive_path = thor_dir_path.join("small.thor");
+            let grf_archive_path = temp_dir.path().join("empty.grf");
+
+            let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
+            let nb_of_added_files = thor_archive.file_count() - 1;
+            apply_patch_to_grf(
+                GrfPatchingMethod::OutOfPlace,
+                true,
+                &grf_archive_path,
+                &mut thor_archive,
+            )
+            .unwrap();
+
+            // After patching
+            let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
+            assert_eq!(nb_of_added_files, grf_archive.file_count());
+            assert_eq!(grf_archive.version_major(), 2);
+            assert_eq!(grf_archive.version_minor(), 0);
         }
         // TODO(LinkZ): Non-empty GRF patching
     }

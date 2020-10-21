@@ -51,6 +51,7 @@ pub struct ClientConfiguration {
 pub struct PatchingConfiguration {
     pub in_place: bool,        // In-place GRF patching
     pub check_integrity: bool, // Check THOR archives' integrity
+    pub create_grf: bool,      // Create new GRFs if they don't exist
 }
 
 pub fn retrieve_patcher_configuration() -> Option<PatcherConfiguration> {
