@@ -21,6 +21,7 @@
 		"default_grf_name": "myserver.grf"
 	},
 	"patching": {
-		"in_place": true
+		"in_place": true,
+		"check_integrity": true
 	}
 }
