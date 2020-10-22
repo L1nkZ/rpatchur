@@ -43,32 +43,34 @@ You can find an example of a configuration file
 Here's a description of each field used in the configuration file.
 
 * `window`
-  * `width` *(int)*: Width of the main window (in pixels).
-  * `height` *(int)*: Height of the main window (in pixels).
-  * `resizable` *(bool)*: Make the main window resizable.
+  * `width` *(int):* Width of the main window (in pixels).
+  * `height` *(int):* Height of the main window (in pixels).
+  * `resizable` *(bool):* Make the main window resizable.
 * `play`: Configure the *Play* button's behavior.
-  * `path` *(string)*: Relative path to the game executable.
-  * `argument` *(string)*: Command-line arguments to pass to the executable.
+  * `path` *(string):* Relative path to the game executable.
+  * `argument` *(string):* Command-line arguments to pass to the executable.
   Can be empty.
 * `setup`: Configure the *Setup* button's behavior.
-  * `path` *(string)*: Relative path to the setup executable.
-  * `argument` *(string)*: Command-line arguments to pass to the executable.
+  * `path` *(string):* Relative path to the setup executable.
+  * `argument` *(string):* Command-line arguments to pass to the executable.
   Can be empty.
 * `web`
-  * `index_url` *(string)*: URL of the web page to use as the UI.
-  * `plist_url` *(string)*: URL of the *plist.txt* file containing the list of
+  * `index_url` *(string):* URL of the web page to use as the UI.
+  * `plist_url` *(string):* URL of the *plist.txt* file containing the list of
   patches to apply.
-  * `patch_url` *(string)*: URL of the directory containing the patches to
+  * `patch_url` *(string):* URL of the directory containing the patches to
   apply.
 * `client`
-  * `default_grf_name` *(string)*: Name of the GRF to patch when a THOR patch
+  * `default_grf_name` *(string):* Name of the GRF to patch when a THOR patch
   indicates the *default* GRF.
 * `patching`
-  * `in_place` *(bool)*: When set to `true`, GRFs are patched without creating
+  * `in_place` *(bool):* When set to `true`, GRFs are patched without creating
   new files. Setting this parameter to `false` makes patching slower but it
   reduces the risk of file corruption, in case of failure.
-  * `check_integrity` *(bool)*: Enforce integrity checks on downloaded THOR
-  patches before applying them.
+  * `check_integrity` *(bool):* When set to `true`, integrity checks are enforced
+  on downloaded THOR patches before applying them.
+  * `create_grf` *(bool):* When set to `true`, GRF files are created if they do
+  not exist prior to patching.
 
 ### User Interface
 
