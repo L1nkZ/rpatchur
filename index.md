@@ -5,7 +5,7 @@ RPatchur is a customizable, cross-platform patcher for Ragnarok Online clients.
 ## Features
 
 * Customizable, web-based UI
-* Configurable through an external JSON file
+* Configurable through an external YAML file
 * HTTP/HTTPS support
 * GRF file patching (version 0x101, 0x102, 0x103 and 0x200)
 * THOR patch format support
@@ -27,16 +27,16 @@ $ cargo build --release
 Using `rpatchur` is pretty simple, you just need to copy the patcher into
 your game client's directory and create a configuration file with the same name
 as the patcher. For example, if you name your patcher `mypatcher.exe`, you must
-name the configuration file `mypatcher.json`.
+name the configuration file `mypatcher.yml`.
 
 You will also need to have an HTTP server that serves your patches and a web
 page to use as the patcher's UI.
 
 ### Configuration File
 
-`rpatchur` uses a JSON configuration file to store configurable parameters.
+`rpatchur` uses a YAML configuration file to store configurable parameters.
 You can find an example of a configuration file 
-[here](https://github.com/L1nkZ/rpatchur/blob/master/examples/rpatchur.json).
+[here](https://github.com/L1nkZ/rpatchur/blob/master/examples/rpatchur.yml).
 
 #### Fields
 
@@ -90,7 +90,7 @@ The web view interacts with the patcher through two-way JavaScript bindings.
 There are a few JavaScript functions that can be called during execution:
 
 * `play`: Executes the configured game executable.
-* `setup`: Executes the configued setup executable.
+* `setup`: Executes the configured setup executable.
 * `exit`: Closes the patcher.
 * `start_update`: Starts the update process (to download and apply patches).
 * `cancel_update`: Cancels the update process if started.
@@ -108,11 +108,11 @@ game client is ready to be launched.
 patching process. A `string` error message is given as an argument.
 * `patchingStatusDownloading(nb_downloaded, nb_total)`: Indicates that the
 patcher is currently downloading patches. `nb_downloaded` is an `int` that
-represents the number of patches that have been downloaded. `nb_total` is in an
+represents the number of patches that have been downloaded. `nb_total` is an
 `int` that represents the total number of patches that will be downloaded.
 * `patchingStatusInstalling(nb_downloaded, nb_total)`: Indicates that the
 patcher is currently applying patches. `nb_downloaded` is an `int` that
-reprsents the number of patches that have been applied. `nb_total` is in an
+represents the number of patches that have been applied. `nb_total` is an
 `int` that represents the total number of patches that will be applied.
 
 You can define these callbacks to receive useful information to display to the
