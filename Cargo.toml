@@ -20,7 +20,7 @@ winres = "0.1"
 [dependencies]
 web-view = "0.6"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_yaml = "0.8"
 futures = "0.3"
 tokio = { version = "0.2", features = ["macros", "rt-threaded", "fs"] }
 reqwest = { version = "0.10", features = ["stream"] }

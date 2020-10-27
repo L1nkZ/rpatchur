@@ -56,8 +56,8 @@ pub struct PatchingConfiguration {
 
 pub fn retrieve_patcher_configuration() -> Option<PatcherConfiguration> {
     let patcher_name = get_patcher_name()?;
-    let configuration_file_name = PathBuf::from(patcher_name).with_extension("json");
-    // Read the JSON contents of the file as an instance of `PatcherConfiguration`.
+    let configuration_file_name = PathBuf::from(patcher_name).with_extension("yml");
+    // Read the YAML content of the file as an instance of `PatcherConfiguration`.
     parse_configuration(configuration_file_name)
 }
 
@@ -70,10 +70,10 @@ fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> Option<PatcherCon
         }
     };
     let config_reader = BufReader::new(config_file);
-    let config: PatcherConfiguration = match serde_json::from_reader(config_reader) {
+    let config: PatcherConfiguration = match serde_yaml::from_reader(config_reader) {
         Ok(t) => t,
         _ => {
-            error!("Invalid JSON configuration.");
+            error!("Invalid configuration.");
             return None;
         }
     };

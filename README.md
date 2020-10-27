@@ -15,7 +15,7 @@ Features
 --------
 
 * Customizable, web-based UI
-* Configurable through an external JSON file
+* Configurable through an external YAML file
 * HTTP/HTTPS support
 * GRF file patching (version 0x101, 0x102, 0x103 and 0x200)
 * THOR patch format support

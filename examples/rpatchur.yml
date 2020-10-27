@@ -1,0 +1,28 @@
+# Configure the patcher's window
+window:
+  width: 780        # Width of the main window (in pixels)
+  height: 580       # Height of the main window (in pixels)
+  resizable: false  # Make the main window resizable
+
+# Configure the Play button’s behavior
+play:
+  path: ragexe.exe    # Relative path to the game executable
+  argument: "-1sak1"  # Command-line arguments to pass to the executable
+
+# Configure the Setup button’s behavior
+setup:
+  path: Setup.exe  # Relative path to the setup executable
+  argument: ""     # Command-line arguments to pass to the executable
+
+web:
+  index_url: https://myserver.com/index.html  # URL of the web page to use as the UI
+  plist_url: https://myserver.com/plist.txt   # URL of the plist.txt file containing the list of patches to apply
+  patch_url: https://myserver.com/data/       # URL of the directory containing the patches to apply
+
+client:
+  default_grf_name: myserver.grf  # Name of the GRF to patch when a THOR patch indicates the default GRF
+
+patching:
+  in_place: true         # Patch GRF in-place
+  check_integrity: true  # Check integrity of download patches
+  create_grf: true       # Create GRFs that do not exist
