@@ -108,27 +108,20 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
                 self.chunks.alloc_chunk(content.len())
             }
         };
-        match offset {
-            None => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "No chunks available",
-            )),
-            Some(offset) => {
-                self.obj.seek(SeekFrom::Start(self.start_offset + offset))?;
-                let mut content_reader = Cursor::new(content);
-                let content_size = io::copy(&mut content_reader, self.obj.by_ref())?;
-                debug_assert_eq!(entry.size_compressed_aligned as u64, content_size);
-                self.entries.insert(
-                    relative_path,
-                    GenericFileEntry {
-                        offset,
-                        size: entry.size as u32,
-                        size_compressed: entry.size_compressed_aligned as u32,
-                    },
-                );
-                Ok(())
-            }
-        }
+
+        self.obj.seek(SeekFrom::Start(self.start_offset + offset))?;
+        let mut content_reader = Cursor::new(content);
+        let content_size = io::copy(&mut content_reader, self.obj.by_ref())?;
+        debug_assert_eq!(entry.size_compressed_aligned as u64, content_size);
+        self.entries.insert(
+            relative_path,
+            GenericFileEntry {
+                offset,
+                size: entry.size as u32,
+                size_compressed: entry.size_compressed_aligned as u32,
+            },
+        );
+        Ok(())
     }
 
     pub fn import_raw_entry_from_thor<R: Read + Seek>(
@@ -152,26 +145,19 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
                 self.chunks.alloc_chunk(content.len())
             }
         };
-        match offset {
-            None => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "No chunks available",
-            )),
-            Some(offset) => {
-                self.obj.seek(SeekFrom::Start(self.start_offset + offset))?;
-                let mut content_reader = Cursor::new(content);
-                let _ = io::copy(&mut content_reader, self.obj.by_ref())?;
-                self.entries.insert(
-                    relative_path,
-                    GenericFileEntry {
-                        offset,
-                        size: entry.size as u32,
-                        size_compressed: entry.size_compressed as u32,
-                    },
-                );
-                Ok(())
-            }
-        }
+
+        self.obj.seek(SeekFrom::Start(self.start_offset + offset))?;
+        let mut content_reader = Cursor::new(content);
+        let _ = io::copy(&mut content_reader, self.obj.by_ref())?;
+        self.entries.insert(
+            relative_path,
+            GenericFileEntry {
+                offset,
+                size: entry.size as u32,
+                size_compressed: entry.size_compressed as u32,
+            },
+        );
+        Ok(())
     }
 
     pub fn add_file<R: Read>(&mut self, relative_path: String, mut data: R) -> io::Result<()> {
@@ -196,27 +182,20 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
                 self.chunks.alloc_chunk(compressed_data_size)
             }
         };
-        match offset {
-            None => Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "No chunks available",
-            )),
-            Some(offset) => {
-                self.obj.seek(SeekFrom::Start(self.start_offset + offset))?;
-                let mut compressed_reader = Cursor::new(compressed_data);
-                let _ = io::copy(&mut compressed_reader, self.obj.by_ref())?;
-                let compressed_data_size_u32 = u32::try_from(compressed_data_size).unwrap();
-                self.entries.insert(
-                    relative_path,
-                    GenericFileEntry {
-                        offset,
-                        size: data_size_u32,
-                        size_compressed: compressed_data_size_u32,
-                    },
-                );
-                Ok(())
-            }
-        }
+
+        self.obj.seek(SeekFrom::Start(self.start_offset + offset))?;
+        let mut compressed_reader = Cursor::new(compressed_data);
+        let _ = io::copy(&mut compressed_reader, self.obj.by_ref())?;
+        let compressed_data_size_u32 = u32::try_from(compressed_data_size).unwrap();
+        self.entries.insert(
+            relative_path,
+            GenericFileEntry {
+                offset,
+                size: data_size_u32,
+                size_compressed: compressed_data_size_u32,
+            },
+        );
+        Ok(())
     }
 
     pub fn remove_file<S: AsRef<str>>(&mut self, relative_path: S) -> bool {
@@ -283,18 +262,9 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         encoder.write_all(&table)?;
         let compressed_table = encoder.finish()?;
         let compressed_table_size = compressed_table.len();
-        let table_offset = match self
+        let table_offset = self
             .chunks
-            .alloc_chunk(compressed_table_size + 2 * std::mem::size_of::<u32>())
-        {
-            None => {
-                return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "No chunks available",
-                ))
-            }
-            Some(v) => v,
-        };
+            .alloc_chunk(compressed_table_size + 2 * std::mem::size_of::<u32>());
         let table_size_u32 = u32::try_from(table.len()).unwrap();
         let compressed_table_size_u32 = u32::try_from(compressed_table_size).unwrap();
         self.obj
