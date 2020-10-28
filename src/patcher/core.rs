@@ -231,7 +231,7 @@ async fn download_patches(
         // Update status
         ui_controller
             .dispatch_patching_status(PatchingStatus::DownloadInProgress(
-                patch_number,
+                1 + patch_number,
                 patch_count,
             ))
             .await;
@@ -354,7 +354,7 @@ async fn apply_patches<P: AsRef<Path>>(
         // Update status
         ui_controller
             .dispatch_patching_status(PatchingStatus::InstallationInProgress(
-                patch_number,
+                1 + patch_number,
                 patch_count,
             ))
             .await;
