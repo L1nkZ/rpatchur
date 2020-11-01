@@ -95,15 +95,8 @@ impl<R: Read + Seek> ThorArchive<R> {
         let mut buf = Vec::new();
         // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
         let _bytes_read = obj.read_to_end(&mut buf)?;
-        let (_, thor_patch) = match parse_thor_patch(buf.as_slice()) {
-            IResult::Ok(v) => v,
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Failed to parse archive.",
-                ))
-            }
-        };
+        let (_, thor_patch) = parse_thor_patch(buf.as_slice())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to parse archive."))?;
         Ok(ThorArchive {
             obj: Box::new(obj),
             container: thor_patch,
@@ -427,16 +420,12 @@ pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorContainer> {
             // Decompress the table with zlib
             let mut decoder = ZlibDecoder::new(&output[table.file_table_offset as usize..]);
             let mut decompressed_table = Vec::new();
-            let _decompressed_size = match decoder.read_to_end(&mut decompressed_table) {
-                Ok(v) => v,
-                Err(_) => return Err(Err::Failure((input, ErrorKind::Switch))),
-            };
+            let _decompressed_size = decoder
+                .read_to_end(&mut decompressed_table)
+                .map_err(|_| Err::Failure((input, ErrorKind::Switch)))?;
             // Parse multiple entries
-            let (_output, entries) =
-                match parse_multiple_files_entries(decompressed_table.as_slice()) {
-                    Ok(v) => v,
-                    Err(_) => return Err(Err::Failure((input, ErrorKind::Many1))),
-                };
+            let (_output, entries) = parse_multiple_files_entries(decompressed_table.as_slice())
+                .map_err(|_| Err::Failure((input, ErrorKind::Many1)))?;
             Ok((
                 &[],
                 ThorContainer {

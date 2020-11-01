@@ -15,7 +15,6 @@ use encoding::DecoderTrap;
 use flate2::read::ZlibDecoder;
 use nom::error::ErrorKind;
 use nom::number::complete::{le_i32, le_u32, le_u8};
-use nom::IResult;
 use nom::*;
 
 pub const GRF_HEADER_MAGIC: &str = "Master of Magic\0";
@@ -35,15 +34,12 @@ impl GrfArchive {
         let mut file = File::open(grf_path)?;
         let mut grf_header_buf = [0; GRF_HEADER_SIZE];
         file.read_exact(&mut grf_header_buf)?;
-        let (parser_output, grf_header) = match parse_grf_header(&grf_header_buf) {
-            IResult::Ok(v) => v,
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Failed to parse archive (header)",
-                ))
-            }
-        };
+        let (parser_output, grf_header) = parse_grf_header(&grf_header_buf).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Failed to parse archive (header)",
+            )
+        })?;
 
         match grf_header.version_major {
             2 => {
@@ -52,16 +48,13 @@ impl GrfArchive {
                     GRF_HEADER_SIZE as u64 + grf_header.file_table_offset,
                 ))?;
                 file.read_exact(&mut table_info_buf)?;
-                let (_parser_output, grf_table_info) =
-                    match parse_grf_table_info_200(&table_info_buf) {
-                        IResult::Ok(v) => v,
-                        _ => {
-                            return Err(io::Error::new(
-                                io::ErrorKind::InvalidData,
-                                "Failed to parse archive (table info)",
-                            ))
-                        }
-                    };
+                let (_parser_output, grf_table_info) = parse_grf_table_info_200(&table_info_buf)
+                    .map_err(|_| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "Failed to parse archive (table info)",
+                        )
+                    })?;
                 if grf_table_info.table_size_compressed == 0 || grf_table_info.table_size == 0 {
                     return Ok(Self {
                         obj: Box::new(file),
@@ -79,28 +72,21 @@ impl GrfArchive {
                 file_chunk.read_to_end(&mut compressed_table)?;
                 let mut decoder = ZlibDecoder::new(compressed_table.as_slice());
                 let mut decompressed_table = vec![];
-                let _decompressed_size = match decoder.read_to_end(&mut decompressed_table) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        return Err(io::Error::new(
+                let _decompressed_size =
+                    decoder.read_to_end(&mut decompressed_table).map_err(|e| {
+                        io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!("Failed to decompress file table: {}", e),
-                        ))
-                    }
-                };
+                        )
+                    })?;
                 // Parse entries
-                let (_output, entries) = match parse_grf_file_entries_200(
+                let (_output, entries) = parse_grf_file_entries_200(
                     decompressed_table.as_slice(),
                     grf_header.file_count,
-                ) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Failed to parse file table",
-                        ))
-                    }
-                };
+                )
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Failed to parse file table")
+                })?;
                 Ok(Self {
                     obj: Box::new(file),
                     container: GrfContainer {
@@ -130,18 +116,13 @@ impl GrfArchive {
                     });
                 }
                 // Parse entries
-                let (_parser_output, entries) = match parse_grf_file_entries_101(
+                let (_parser_output, entries) = parse_grf_file_entries_101(
                     &parser_output[grf_header.file_table_offset as usize..],
                     grf_header.file_count,
-                ) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Failed to parse file table",
-                        ))
-                    }
-                };
+                )
+                .map_err(|_| {
+                    io::Error::new(io::ErrorKind::InvalidData, "Failed to parse file table")
+                })?;
                 Ok(Self {
                     obj: Box::new(file),
                     container: GrfContainer {

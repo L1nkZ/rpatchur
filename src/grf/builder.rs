@@ -63,10 +63,9 @@ where
         Some(v) => v,
         None => return Err(io::Error::new(io::ErrorKind::Other, "Encoder unavailable")),
     };
-    let mut vec = match decoder.encode(string, EncoderTrap::Strict) {
-        Ok(v) => v,
-        Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "Encoding failed")),
-    };
+    let mut vec = decoder
+        .encode(string, EncoderTrap::Strict)
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "Encoding failed"))?;
     vec.push(0); // NUL char terminator
     writer.write_all(vec.as_slice())
 }
@@ -164,10 +163,8 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         // Compress it
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         let data_size = io::copy(data.by_ref(), &mut encoder)?;
-        let data_size_u32 = match u32::try_from(data_size) {
-            Ok(v) => v,
-            Err(_) => return Err(io::Error::new(io::ErrorKind::InvalidData, "File too big")),
-        };
+        let data_size_u32 = u32::try_from(data_size)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "File too big"))?;
         // Write compressed data
         let compressed_data = encoder.finish()?;
         let compressed_data_size = compressed_data.len();
@@ -214,15 +211,8 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         }
         self.finished = true;
 
-        let v_file_count = match i32::try_from(self.entries.len() + 7) {
-            Ok(v) => v,
-            Err(_) => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Too many file entries",
-                ))
-            }
-        };
+        let v_file_count = i32::try_from(self.entries.len() + 7)
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Too many file entries"))?;
         let file_table_offset = match self.version_major {
             2 => self.write_grf_table_200()?,
             1 => std::unimplemented!(), // TODO(LinkZ): Implement
@@ -329,15 +319,8 @@ fn write_grf_header<W: Write>(
         version,
     };
     writer.write_all(GRF_HEADER_MAGIC.as_bytes())?;
-    match bincode::serialize_into(writer, &grf_header) {
-        Ok(_) => (),
-        Err(_) => {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Failed to serialize header",
-            ))
-        }
-    }
+    bincode::serialize_into(writer, &grf_header)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to serialize header"))?;
     Ok(())
 }
 
