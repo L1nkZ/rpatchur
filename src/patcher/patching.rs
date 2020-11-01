@@ -60,11 +60,16 @@ fn apply_patch_to_grf_ip<P: AsRef<Path>, R: Read + Seek>(
     thor_archive: &mut ThorArchive<R>,
 ) -> io::Result<()> {
     let mut builder = GrfArchiveBuilder::open(grf_file_path)?;
-    let thor_entries: Vec<ThorFileEntry> = thor_archive.get_entries().cloned().collect();
+    let mut thor_entries: Vec<ThorFileEntry> = thor_archive
+        .get_entries()
+        .filter(|e| !e.is_internal())
+        .cloned()
+        .collect();
+    thor_entries.sort_unstable_by(|a, b| a.offset.cmp(&b.offset));
     for entry in thor_entries {
         if entry.is_removed {
             let _ = builder.remove_file(&entry.relative_path);
-        } else if !entry.is_internal() {
+        } else {
             builder.import_raw_entry_from_thor(thor_archive, entry.relative_path)?;
         }
     }
@@ -146,13 +151,18 @@ pub fn apply_patch_to_disk<P: AsRef<Path>, R: Read + Seek>(
     // TODO(LinkZ): Save original files before updating/removing them in order
     // to be able to restore them in case of failure
     // TODO(LinkZ): Make async?
-    let file_entries: Vec<ThorFileEntry> = thor_archive.get_entries().cloned().collect();
+    let mut file_entries: Vec<ThorFileEntry> = thor_archive
+        .get_entries()
+        .filter(|e| !e.is_internal())
+        .cloned()
+        .collect();
+    file_entries.sort_unstable_by(|a, b| a.offset.cmp(&b.offset));
     for entry in file_entries {
         let dest_path = join_windows_relative_path(root_directory.as_ref(), &entry.relative_path);
         if entry.is_removed {
             // Try to remove file and ignore errors (file might not exist)
             let _ignore = fs::remove_file(dest_path);
-        } else if !entry.is_internal() {
+        } else {
             // Create parent directory if needed
             if let Some(parent_dir) = dest_path.parent() {
                 fs::create_dir_all(parent_dir)?
