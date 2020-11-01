@@ -193,8 +193,8 @@ mod tests {
     #[test]
     fn test_apply_patch_to_disk() {
         let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        let temp_dir = tempdir().unwrap();
         {
-            let temp_dir = tempdir().unwrap();
             let count_files = |dir_path| {
                 WalkDir::new(dir_path)
                     .into_iter()
@@ -224,14 +224,13 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_patch_to_grf_ip() {
+    fn test_apply_patch_to_grf_ip_empty() {
         let grf_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/grf");
         let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
-        // Empty GRF
+        let temp_dir = tempdir().unwrap();
+        let thor_archive_path = thor_dir_path.join("small.thor");
+        let grf_archive_path = temp_dir.path().join("empty.grf");
         {
-            let temp_dir = tempdir().unwrap();
-            let thor_archive_path = thor_dir_path.join("small.thor");
-            let grf_archive_path = temp_dir.path().join("empty.grf");
             fs::copy(grf_dir_path.join("200-empty.grf"), &grf_archive_path).unwrap();
 
             // Before patching
@@ -256,40 +255,43 @@ mod tests {
             assert_eq!(grf_archive.version_major(), grf_version_major);
             assert_eq!(grf_archive.version_minor(), grf_version_minor);
         }
-        // Create GRF
-        {
-            let temp_dir = tempdir().unwrap();
-            let grf_archive_path = temp_dir.path().join("empty.grf");
-            let thor_archive_path = thor_dir_path.join("small.thor");
-
-            let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
-            let nb_of_added_files = thor_archive.file_count() - 1;
-            apply_patch_to_grf(
-                GrfPatchingMethod::InPlace,
-                true,
-                &grf_archive_path,
-                &mut thor_archive,
-            )
-            .unwrap();
-
-            // After patching
-            let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
-            assert_eq!(nb_of_added_files, grf_archive.file_count());
-            assert_eq!(grf_archive.version_major(), 2);
-            assert_eq!(grf_archive.version_minor(), 0);
-        }
-        // TODO(LinkZ): Non-empty GRF patching
+        assert!(patch_maintained_integrity(&thor_archive_path, &grf_archive_path).unwrap());
     }
 
     #[test]
-    fn test_apply_patch_to_grf_oop() {
+    fn test_apply_patch_to_grf_ip_empty_create() {
+        let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        let temp_dir = tempdir().unwrap();
+        let grf_archive_path = temp_dir.path().join("empty.grf");
+        let thor_archive_path = thor_dir_path.join("small.thor");
+        {
+            let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
+            let nb_of_added_files = thor_archive.file_count() - 1;
+            apply_patch_to_grf(
+                GrfPatchingMethod::InPlace,
+                true,
+                &grf_archive_path,
+                &mut thor_archive,
+            )
+            .unwrap();
+
+            // After patching
+            let grf_archive = GrfArchive::open(&grf_archive_path).unwrap();
+            assert_eq!(nb_of_added_files, grf_archive.file_count());
+            assert_eq!(grf_archive.version_major(), 2);
+            assert_eq!(grf_archive.version_minor(), 0);
+        }
+        assert!(patch_maintained_integrity(&thor_archive_path, &grf_archive_path).unwrap());
+    }
+
+    #[test]
+    fn test_apply_patch_to_grf_oop_empty() {
         let grf_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/grf");
         let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
-        // Empty GRF
+        let temp_dir = tempdir().unwrap();
+        let thor_archive_path = thor_dir_path.join("small.thor");
+        let grf_archive_path = temp_dir.path().join("empty.grf");
         {
-            let temp_dir = tempdir().unwrap();
-            let thor_archive_path = thor_dir_path.join("small.thor");
-            let grf_archive_path = temp_dir.path().join("empty.grf");
             fs::copy(grf_dir_path.join("200-empty.grf"), &grf_archive_path).unwrap();
 
             // Before patching
@@ -314,12 +316,16 @@ mod tests {
             assert_eq!(grf_archive.version_major(), grf_version_major);
             assert_eq!(grf_archive.version_minor(), grf_version_minor);
         }
-        // Create GRF
-        {
-            let temp_dir = tempdir().unwrap();
-            let thor_archive_path = thor_dir_path.join("small.thor");
-            let grf_archive_path = temp_dir.path().join("empty.grf");
+        assert!(patch_maintained_integrity(&thor_archive_path, &grf_archive_path).unwrap());
+    }
 
+    #[test]
+    fn test_apply_patch_to_grf_oop_empty_create() {
+        let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        let temp_dir = tempdir().unwrap();
+        let thor_archive_path = thor_dir_path.join("small.thor");
+        let grf_archive_path = temp_dir.path().join("empty.grf");
+        {
             let mut thor_archive = ThorArchive::open(&thor_archive_path).unwrap();
             let nb_of_added_files = thor_archive.file_count() - 1;
             apply_patch_to_grf(
@@ -336,6 +342,26 @@ mod tests {
             assert_eq!(grf_archive.version_major(), 2);
             assert_eq!(grf_archive.version_minor(), 0);
         }
-        // TODO(LinkZ): Non-empty GRF patching
+        assert!(patch_maintained_integrity(&thor_archive_path, &grf_archive_path).unwrap());
+    }
+
+    fn patch_maintained_integrity(
+        thor_file_path: &PathBuf,
+        grf_file_path: &PathBuf,
+    ) -> io::Result<bool> {
+        let mut thor_archive = ThorArchive::open(&thor_file_path)?;
+        let mut grf_archive = GrfArchive::open(&grf_file_path)?;
+        let thor_entries: Vec<ThorFileEntry> = thor_archive.get_entries().cloned().collect();
+        for file_entry in thor_entries {
+            if file_entry.is_internal() || file_entry.is_removed {
+                continue;
+            }
+            let expected_content = thor_archive.read_file_content(&file_entry.relative_path)?;
+            let file_content = grf_archive.read_file_content(&file_entry.relative_path)?;
+            if expected_content != file_content {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 }
