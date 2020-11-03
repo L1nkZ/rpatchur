@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryFrom;
 use std::io;
 
@@ -11,6 +11,7 @@ pub struct AvailableChunk {
 
 pub struct AvailableChunkList {
     end_offset: u64,
+    sizes: BTreeSet<(usize, u64)>, // Indexed and ordered by size
     chunks: BTreeMap<u64, AvailableChunk>, // Indexed and ordered by offset
 }
 
@@ -21,6 +22,7 @@ pub fn list_available_chunks(archive: &mut GrfArchive) -> io::Result<AvailableCh
 
     let mut entries: Vec<&GrfFileEntry> = archive.get_entries().collect();
     entries.sort_by(|a, b| a.offset.cmp(&b.offset));
+    let mut chunks_sizes = BTreeSet::new();
     let mut available_chunks = BTreeMap::new();
     for i in 0..entries.len() - 1 {
         let left_entry = entries[i];
@@ -28,6 +30,7 @@ pub fn list_available_chunks(archive: &mut GrfArchive) -> io::Result<AvailableCh
         let expected_entry_offset = left_entry.offset + left_entry.size_compressed_aligned as u64;
         let space_between_entries = usize::try_from(right_entry.offset - expected_entry_offset)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "File too big or malformed"))?;
+        chunks_sizes.insert((space_between_entries, expected_entry_offset));
         available_chunks.insert(
             expected_entry_offset,
             AvailableChunk {
@@ -39,17 +42,20 @@ pub fn list_available_chunks(archive: &mut GrfArchive) -> io::Result<AvailableCh
     let last_entry_offset = last_entry.offset + last_entry.size_compressed_aligned as u64;
     Ok(AvailableChunkList {
         end_offset: last_entry_offset,
+        sizes: chunks_sizes,
         chunks: available_chunks,
     })
 }
 
 impl AvailableChunkList {
     pub fn new() -> AvailableChunkList {
-        let map = BTreeMap::new();
-        let offset = GRF_HEADER_SIZE as u64;
+        let end_offset = GRF_HEADER_SIZE as u64;
+        let sizes = BTreeSet::new();
+        let chunks = BTreeMap::new();
         AvailableChunkList {
-            end_offset: offset,
-            chunks: map,
+            end_offset,
+            sizes,
+            chunks,
         }
     }
 
@@ -61,28 +67,21 @@ impl AvailableChunkList {
             let new_offset = chunk_offset + size as u64;
             self.end_offset = new_offset;
         } else {
-            let chunk = self.chunks.remove(&chunk_offset).unwrap();
+            let chunk = self.remove_chunk_internal(chunk_offset).unwrap();
             if chunk.size > size {
                 let new_offset = chunk_offset + size as u64;
-                self.chunks.insert(
-                    new_offset,
-                    AvailableChunk {
-                        size: chunk.size - size,
-                    },
-                );
+                self.insert_chunk_internal(new_offset, chunk.size - size);
             }
         }
         chunk_offset
     }
 
     fn find_suitable_chunk(&self, size: usize) -> u64 {
-        let opt_item = self
-            .chunks
-            .iter()
-            .find(|(_, chunk)| if chunk.size >= size { true } else { false });
+        // Find first chunk with a sufficient size
+        let opt_item = self.sizes.range((size, 0)..).next();
         match opt_item {
             None => self.end_offset,
-            Some((offset, _)) => *offset,
+            Some((_, offset)) => *offset,
         }
     }
 
@@ -97,13 +96,8 @@ impl AvailableChunkList {
             let next_chunk_size = next_chunk.size;
             if size + next_chunk_size >= new_size {
                 // Sufficient space for in-place grow
-                let _ = self.chunks.remove(&end_offset).unwrap();
-                self.chunks.insert(
-                    new_end_offset,
-                    AvailableChunk {
-                        size: size + next_chunk_size - new_size,
-                    },
-                );
+                let _ = self.remove_chunk_internal(end_offset).unwrap();
+                self.insert_chunk_internal(new_end_offset, size + next_chunk_size - new_size);
                 return offset;
             }
         }
@@ -132,7 +126,7 @@ impl AvailableChunkList {
             let end_offset_left = offset_left + chunk_left.size as u64;
             if end_offset_left == offset {
                 // Merge to the left
-                let chunk = self.chunks.remove(&offset_left).unwrap();
+                let chunk = self.remove_chunk_internal(offset_left).unwrap();
                 new_chunk_offset = offset_left;
                 new_chunk_size += chunk.size;
             }
@@ -143,15 +137,23 @@ impl AvailableChunkList {
             self.end_offset = new_chunk_offset;
         } else if self.chunks.contains_key(&chunk_end_offset) {
             // Merge to the right with another chunk
-            let chunk = self.chunks.remove(&chunk_end_offset).unwrap();
+            let chunk = self.remove_chunk_internal(chunk_end_offset).unwrap();
             new_chunk_size += chunk.size;
         }
-        self.chunks.insert(
-            new_chunk_offset,
-            AvailableChunk {
-                size: new_chunk_size,
-            },
-        );
+        self.insert_chunk_internal(new_chunk_offset, new_chunk_size);
+    }
+
+    fn insert_chunk_internal(&mut self, offset: u64, size: usize) {
+        self.sizes.insert((size, offset));
+        self.chunks.insert(offset, AvailableChunk { size });
+    }
+
+    fn remove_chunk_internal(&mut self, offset: u64) -> Option<AvailableChunk> {
+        let chunk = self.chunks.remove(&offset)?;
+        let tuple = (chunk.size, offset);
+        let removed = self.sizes.remove(&tuple);
+        assert!(removed);
+        Some(chunk)
     }
 }
 
