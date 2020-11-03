@@ -11,12 +11,16 @@ use crc::crc32;
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
 use flate2::read::ZlibDecoder;
-use nom::error::ErrorKind;
 use nom::number::complete::{le_i16, le_i32, le_u32, le_u8};
 use nom::*;
 
 const HEADER_MAGIC: &str = "ASSF (C) 2007 Aeomin DEV";
 const INTEGRITY_FILE_NAME: &str = "data.integrity";
+// Packed structs' sizes in bytes
+const MULTIPLE_FILES_TABLE_SIZE: usize = 2 * std::mem::size_of::<i32>();
+const MAX_FILE_NAME_SIZE: usize = 256;
+const HEADER_MAX_SIZE: usize = HEADER_MAGIC.len() + 0x8 + MAX_FILE_NAME_SIZE;
+const SINGLE_FILE_ENTRY_MAX_SIZE: usize = 9 + MAX_FILE_NAME_SIZE;
 
 pub type ThorPatchList = Vec<ThorPatchInfo>;
 
@@ -92,11 +96,7 @@ impl ThorArchive<File> {
 impl<R: Read + Seek> ThorArchive<R> {
     /// Create a new archive with the underlying object as the reader.
     pub fn new(mut obj: R) -> io::Result<ThorArchive<R>> {
-        let mut buf = Vec::new();
-        // TODO(LinkZ): Avoid using read_to_end, reading the whole file is unnecessary
-        let _bytes_read = obj.read_to_end(&mut buf)?;
-        let (_, thor_patch) = parse_thor_patch(buf.as_slice())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to parse archive."))?;
+        let thor_patch = parse_thor_patch(&mut obj)?;
         Ok(ThorArchive {
             obj: Box::new(obj),
             container: thor_patch,
@@ -387,53 +387,80 @@ named!(parse_multiple_files_entries<&[u8], HashMap<String, ThorFileEntry>>,
     })
 );
 
-pub fn parse_thor_patch(input: &[u8]) -> IResult<&[u8], ThorContainer> {
-    let (output, header) = parse_thor_header(input)?;
+pub fn parse_thor_patch<R: Seek + Read>(reader: &mut R) -> io::Result<ThorContainer> {
+    const HEADER_EXTENDED_MAX_SIZE: usize =
+        HEADER_MAX_SIZE + MULTIPLE_FILES_TABLE_SIZE + SINGLE_FILE_ENTRY_MAX_SIZE;
+    let mut thor_header_buf = Vec::with_capacity(HEADER_EXTENDED_MAX_SIZE);
+    let mut reader_chunk = reader.take(thor_header_buf.capacity() as u64);
+    reader_chunk.read_to_end(&mut thor_header_buf)?;
+    let (output, header) = parse_thor_header(&thor_header_buf)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to parse THOR header"))?;
     match header.mode {
-        ThorMode::Invalid => Err(Err::Failure((input, ErrorKind::Switch))),
+        ThorMode::Invalid => Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid THOR header mode",
+        )),
         ThorMode::SingleFile => {
             // Parse table
-            let (output, table) = parse_single_file_table(output)?;
+            let (output, table) = parse_single_file_table(output).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Failed to parse THOR file table",
+                )
+            })?;
             // Parse the single entry
-            let (output, mut entry) = parse_single_file_entry(output)?;
-            entry.offset = output.as_ptr() as u64 - input.as_ptr() as u64;
-            Ok((
-                output,
-                ThorContainer {
-                    header,
-                    table: ThorTable::SingleFile(table),
-                    entries: [(entry.relative_path.clone(), entry)]
-                        .iter()
-                        .cloned()
-                        .collect(),
-                },
-            ))
+            let (output, mut entry) = parse_single_file_entry(output).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Failed to parse THOR file entry",
+                )
+            })?;
+            entry.offset = output.as_ptr() as u64 - thor_header_buf.as_ptr() as u64;
+            Ok(ThorContainer {
+                header,
+                table: ThorTable::SingleFile(table),
+                entries: [(entry.relative_path.clone(), entry)]
+                    .iter()
+                    .cloned()
+                    .collect(),
+            })
         }
         ThorMode::MultipleFiles => {
-            let (output, mut table) = parse_multiple_files_table(output)?;
-            let consumed_bytes = output.as_ptr() as u64 - input.as_ptr() as u64;
+            let (output, table) = parse_multiple_files_table(output).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Failed to parse THOR file table",
+                )
+            })?;
+            let consumed_bytes = output.as_ptr() as u64 - thor_header_buf.as_ptr() as u64;
             if table.file_table_offset < consumed_bytes {
-                return Err(Err::Failure((input, ErrorKind::Switch)));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "Invalid THOR file table offset",
+                ));
             }
-            // Compute actual table offset inside of 'output'
-            table.file_table_offset -= consumed_bytes;
             // Decompress the table with zlib
-            let mut decoder = ZlibDecoder::new(&output[table.file_table_offset as usize..]);
-            let mut decompressed_table = Vec::new();
-            let _decompressed_size = decoder
-                .read_to_end(&mut decompressed_table)
-                .map_err(|_| Err::Failure((input, ErrorKind::Switch)))?;
+            reader.seek(SeekFrom::Start(table.file_table_offset))?;
+            let mut compressed_table: Vec<u8> =
+                Vec::with_capacity(table.file_table_compressed_size);
+            let mut file_chunk = reader.take(compressed_table.capacity() as u64);
+            file_chunk.read_to_end(&mut compressed_table)?;
+            let mut decoder = ZlibDecoder::new(compressed_table.as_slice());
+            let mut decompressed_table = vec![];
+            let _decompressed_size = decoder.read_to_end(&mut decompressed_table)?;
             // Parse multiple entries
-            let (_output, entries) = parse_multiple_files_entries(decompressed_table.as_slice())
-                .map_err(|_| Err::Failure((input, ErrorKind::Many1)))?;
-            Ok((
-                &[],
-                ThorContainer {
-                    header,
-                    table: ThorTable::MultipleFiles(table),
-                    entries,
-                },
-            ))
+            let (_, entries) = parse_multiple_files_entries(decompressed_table.as_slice())
+                .map_err(|_| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "Failed to parse THOR file entries",
+                    )
+                })?;
+            Ok(ThorContainer {
+                header,
+                table: ThorTable::MultipleFiles(table),
+                entries,
+            })
         }
     }
 }
