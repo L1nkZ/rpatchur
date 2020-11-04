@@ -1,8 +1,6 @@
 #![windows_subsystem = "windows"]
 
-mod grf;
 mod patcher;
-mod thor;
 mod ui;
 
 use std::io;

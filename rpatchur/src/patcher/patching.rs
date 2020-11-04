@@ -4,8 +4,8 @@ use std::io;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use crate::grf::{GrfArchive, GrfArchiveBuilder};
-use crate::thor::{ThorArchive, ThorFileEntry};
+use gruf::grf::{GrfArchive, GrfArchiveBuilder};
+use gruf::thor::{ThorArchive, ThorFileEntry};
 
 /// Indicates the method that should be used when patching GRF files.
 pub enum GrfPatchingMethod {

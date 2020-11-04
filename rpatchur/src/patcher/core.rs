@@ -7,8 +7,8 @@ use super::cache::{read_cache_file, write_cache_file, PatcherCache};
 use super::cancellation::{check_for_cancellation, wait_for_cancellation, InterruptibleFnError};
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
-use crate::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
 use crate::ui::{PatchingStatus, UIController};
+use gruf::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
 use tokio::sync::mpsc;
 use url::Url;
 

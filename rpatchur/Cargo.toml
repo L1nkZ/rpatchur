@@ -1,0 +1,38 @@
+[package]
+name = "rpatchur"
+version = "0.1.0"
+authors = ["LinkZ <wanthost@gmail.com>"]
+edition = "2018"
+build = "build.rs"
+
+[package.metadata.winres]
+FileDescription = "A customizable patcher for Ragnarok Online"
+ProductName = "RPatchur"
+ProductVersion = "0.1.0"
+LegalCopyright = "Copyright © 2020 rpatchur developers"
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
+[dependencies]
+gruf = { version = "0.1", path = "../gruf" }
+
+web-view = "0.6"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.8"
+futures = "0.3"
+tokio = { version = "0.2", features = ["macros", "rt-threaded", "fs"] }
+reqwest = { version = "0.10", features = ["stream"] }
+url = "2.1"
+tempfile = "3.1"
+log = { version = "0.4", features = ["release_max_level_off"] }
+simple_logger = "1.10"
+bincode = "1.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = "0.3"
+
+[dev-dependencies]
+twox-hash = "1.5"
+walkdir = "2.3"
+httptest = "0.13"

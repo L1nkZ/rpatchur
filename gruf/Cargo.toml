@@ -1,0 +1,18 @@
+[package]
+name = "gruf"
+version = "0.1.0"
+authors = ["LinkZ <wanthost@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+nom = "5.1"
+flate2 = "1.0"
+encoding = "0.2"
+crc = "1.8"
+bincode = "1.2"
+
+[dev-dependencies]
+twox-hash = "1.5"
+hex-literal = "0.2"
+tempfile = "3.1"
