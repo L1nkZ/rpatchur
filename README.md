@@ -40,6 +40,19 @@ Examples
 You can find example files for the UI and the configuration file in the
 `examples` directory.
 
+Building
+--------
+
+The `rpatchur` directory contains the actual patcher code (UI, archive merging, etc.).
+The `gruf` directory contains the core library for parsing and building GRF and THOR archives.
+
+To clone the repository and build everything, simply run:
+```
+$ git clone https://github.com/L1nkZ/rpatchur.git
+$ cd rpatchur
+$ cargo build --release
+```
+
 Additional Notes
 ----------------
 
