@@ -2,12 +2,14 @@ use std::env;
 use std::fs::File;
 use std::io::{self, prelude::Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use super::cache::{read_cache_file, write_cache_file, PatcherCache};
 use super::cancellation::{check_for_cancellation, wait_for_cancellation, InterruptibleFnError};
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::ui::{PatchingStatus, UIController};
+use futures::executor::block_on;
 use gruf::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
 use tokio::sync::mpsc;
 use url::Url;
@@ -175,16 +177,37 @@ async fn download_patches(
     let patch_count = patch_list.len();
     let mut pending_patch_queue = Vec::with_capacity(patch_count);
     ui_controller
-        .dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count))
+        .dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count, 0))
         .await;
     for (patch_number, patch) in patch_list.into_iter().enumerate() {
         let mut tmp_file = tempfile::tempfile().map_err(|e| {
             InterruptibleFnError::Err(format!("Failed to create temporary file: {}.", e))
         })?;
+        // Setup a progress callback that'll send the current download speed to the UI
+        let one_second = Duration::from_secs(1);
+        let mut instant = Instant::now();
+        let mut last_downloaded_bytes: u64 = 0;
+        let mut progress_callback = move |dl_now, _| {
+            let elapsed_time = instant.elapsed();
+            if elapsed_time >= one_second {
+                instant = Instant::now();
+                let dl_delta = dl_now - last_downloaded_bytes;
+                let downloaded_bytes_per_sec =
+                    (dl_delta as f32 / elapsed_time.as_secs_f32()).round() as u64;
+                block_on(ui_controller.dispatch_patching_status(
+                    PatchingStatus::DownloadInProgress(
+                        patch_number,
+                        patch_count,
+                        downloaded_bytes_per_sec,
+                    ),
+                ));
+                last_downloaded_bytes = dl_now;
+            }
+        };
         // Download file in a cancelable manner
         tokio::select! {
             cancel_res = wait_for_cancellation(patching_thread_rx) => return Err(cancel_res),
-            download_res = download_patch_to_file(&patch_url, &patch, &mut tmp_file) => {
+            download_res = download_patch_to_file(&patch_url, &patch, &mut tmp_file, &mut progress_callback) => {
                 if let Err(msg) = download_res {
                     return Err(InterruptibleFnError::Err(msg));
                 }
@@ -233,6 +256,7 @@ async fn download_patches(
             .dispatch_patching_status(PatchingStatus::DownloadInProgress(
                 1 + patch_number,
                 patch_count,
+                0,
             ))
             .await;
     }
@@ -240,10 +264,11 @@ async fn download_patches(
 }
 
 /// Downloads a single patch described with a `ThorPatchInfo`.
-async fn download_patch_to_file(
+async fn download_patch_to_file<CB: FnMut(u64, u64)>(
     patch_url: &Url,
     patch: &ThorPatchInfo,
     tmp_file: &mut File,
+    mut progress_callback: CB,
 ) -> Result<(), String> {
     let patch_file_url = patch_url.join(patch.file_name.as_str()).map_err(|_| {
         format!(
@@ -260,14 +285,18 @@ async fn download_patch_to_file(
             patch.file_name
         ));
     }
+    let bytes_to_download = resp.content_length().unwrap_or(0);
+    let mut downloaded_bytes: u64 = 0;
     while let Some(chunk) = resp
         .chunk()
         .await
         .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?
     {
-        let _ = tmp_file
+        tmp_file
             .write_all(&chunk[..])
             .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?;
+        downloaded_bytes += chunk.len() as u64;
+        progress_callback(downloaded_bytes, bytes_to_download);
     }
     tmp_file.sync_all().map_err(|e| {
         format!(
@@ -392,7 +421,7 @@ mod tests {
             file_name: patch_name.to_string(),
         };
         let mut tmp_file = tempfile::tempfile().unwrap();
-        download_patch_to_file(&from_url, &patch_info, &mut tmp_file)
+        download_patch_to_file(&from_url, &patch_info, &mut tmp_file, |_, _| {})
             .await
             .unwrap();
 
