@@ -28,9 +28,12 @@ impl UIController {
                 PatchingStatus::Error(msg) => {
                     webview.eval(&format!("patchingStatusError(\"{}\")", msg))
                 }
-                PatchingStatus::DownloadInProgress(nb_downloaded, nb_total) => webview.eval(
-                    &format!("patchingStatusDownloading({}, {})", nb_downloaded, nb_total),
-                ),
+                PatchingStatus::DownloadInProgress(nb_downloaded, nb_total, bytes_per_sec) => {
+                    webview.eval(&format!(
+                        "patchingStatusDownloading({}, {}, {})",
+                        nb_downloaded, nb_total, bytes_per_sec
+                    ))
+                }
                 PatchingStatus::InstallationInProgress(nb_installed, nb_total) => webview.eval(
                     &format!("patchingStatusInstalling({}, {})", nb_installed, nb_total),
                 ),
@@ -48,9 +51,9 @@ impl UIController {
 /// Used to indicate the current status of the patching process.
 pub enum PatchingStatus {
     Ready,
-    Error(String),                        // Error message
-    DownloadInProgress(usize, usize),     // Downloaded, Total
-    InstallationInProgress(usize, usize), // Installed, Total
+    Error(String),                         // Error message
+    DownloadInProgress(usize, usize, u64), // Downloaded files, Total number, Bytes per second
+    InstallationInProgress(usize, usize),  // Installed patches, Total number
 }
 
 pub struct WebViewUserData {
