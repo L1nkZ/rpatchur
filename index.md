@@ -104,15 +104,17 @@ The patcher also invokes some callbacks during execution:
 
 * `patchingStatusReady()`: Indicates that the patcher is finished and that the
 game client is ready to be launched.
-* `patchingStatusError(error_msg)`: Indicates that an error occured during the
+* `patchingStatusError(errorMsg)`: Indicates that an error occured during the
 patching process. A `string` error message is given as an argument.
-* `patchingStatusDownloading(nb_downloaded, nb_total)`: Indicates that the
-patcher is currently downloading patches. `nb_downloaded` is an `int` that
-represents the number of patches that have been downloaded. `nb_total` is an
+* `patchingStatusDownloading(nbDownloaded, nbTotal, bytesPerSec)`: Indicates that the
+patcher is currently downloading patches. `nbDownloaded` is an `int` that
+represents the number of patches that have been downloaded. `nbTotal` is an
 `int` that represents the total number of patches that will be downloaded.
-* `patchingStatusInstalling(nb_downloaded, nb_total)`: Indicates that the
-patcher is currently applying patches. `nb_downloaded` is an `int` that
-represents the number of patches that have been applied. `nb_total` is an
+`bytesPerSec` is an `int` that indicates the current download speed in bytes
+per second.
+* `patchingStatusInstalling(nbDownloaded, nbTotal)`: Indicates that the
+patcher is currently applying patches. `nbDownloaded` is an `int` that
+represents the number of patches that have been applied. `nbTotal` is an
 `int` that represents the total number of patches that will be applied.
 
 You can define these callbacks to receive useful information to display to the
