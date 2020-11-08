@@ -82,7 +82,7 @@ async fn interruptible_patcher_routine(
 
     // Try to read cache
     let cache_file_path =
-        get_cache_file_path().ok_or_else(|| "Failed to resolve patcher name.".to_string())?;
+        get_cache_file_path().map_err(|_| "Failed to resolve patcher name.".to_string())?;
     if let Ok(patcher_cache) = read_cache_file(&cache_file_path).await {
         // Ignore already applied patches if needed
         // First we verify that our cached index looks relevant
@@ -153,12 +153,9 @@ async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> 
 }
 
 /// Returns the patcher cache file's name as a `PathBuf` on success.
-fn get_cache_file_path() -> Option<PathBuf> {
-    if let Some(patcher_name) = get_patcher_name() {
-        Some(PathBuf::from(patcher_name).with_extension("dat"))
-    } else {
-        None
-    }
+fn get_cache_file_path() -> io::Result<PathBuf> {
+    let patcher_name = get_patcher_name()?;
+    Ok(PathBuf::from(patcher_name).with_extension("dat"))
 }
 
 /// Downloads a list of patches (described with a `ThorPatchList`).

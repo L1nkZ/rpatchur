@@ -10,25 +10,25 @@ use simple_logger::SimpleLogger;
 use tokio::{runtime, sync::mpsc};
 use ui::{UIController, WebViewUserData};
 
+const WINDOW_TITLE: &str = "RPatchur";
+
 fn main() {
     SimpleLogger::new()
         .init()
         .expect("Failed to initalize the logger");
     let mut tokio_rt = build_tokio_runtime().expect("Failed to build a tokio runtime");
     let config = match retrieve_patcher_configuration() {
-        None => {
-            log::error!("Failed to retrieve the patcher's configuration");
-            ui::msg_box(
-                "Error",
-                "<b>Error:</b> Configuration file is invalid or doesn't exist.",
-            );
+        Err(e) => {
+            let err_msg = "Failed to retrieve the patcher's configuration";
+            log::error!("{}", err_msg);
+            ui::msg_box(WINDOW_TITLE, format!("<b>Error:</b> {}: {}.", err_msg, e));
             return;
         }
-        Some(v) => v,
+        Ok(v) => v,
     };
     // Create a channel to allow the webview's thread to communicate with the patching thread
     let (tx, rx) = mpsc::channel::<PatcherCommand>(8);
-    let webview = ui::build_webview("RPatchur", WebViewUserData::new(config.clone(), tx))
+    let webview = ui::build_webview(WINDOW_TITLE, WebViewUserData::new(config.clone(), tx))
         .expect("Failed to build a web view");
     let patching_task = tokio_rt.spawn(patcher_thread_routine(
         UIController::new(&webview),
