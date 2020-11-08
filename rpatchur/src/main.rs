@@ -18,6 +18,10 @@ fn main() {
     let config = match retrieve_patcher_configuration() {
         None => {
             log::error!("Failed to retrieve the patcher's configuration");
+            ui::msg_box(
+                "Error",
+                "<b>Error:</b> Configuration file is invalid or doesn't exist.",
+            );
             return;
         }
         Some(v) => v,

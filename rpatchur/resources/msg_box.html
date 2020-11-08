@@ -1,0 +1,55 @@
+<!-- HTML template used as the patcher's message box layout -->
+<!DOCTYPE html>
+<html>
+
+<head>
+    <style>
+        /* Disable text selection */
+        .noselect {
+            -webkit-touch-callout: none;
+            /* iOS Safari */
+            -webkit-user-select: none;
+            /* Safari */
+            -khtml-user-select: none;
+            /* Konqueror HTML */
+            -moz-user-select: none;
+            /* Firefox */
+            -ms-user-select: none;
+            /* Internet Explorer/Edge */
+            user-select: none;
+            /* Non-prefixed version, currently supported by Chrome and Opera */
+        }
+
+        body {
+            background-color: #2c2c2c;
+        }
+
+        p {
+            font-family: arial;
+            font-size: 13px;
+            margin-left: 10px;
+        }
+
+        .bar {
+            /* margin: 5px; */
+            color: #333;
+            background: #fafafa;
+            border: 1px solid #ccc;
+        }
+
+        .error {
+            color: #ba3939;
+            background: #ffe0e0;
+            border: 1px solid #a33a3a;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="bar error noselect">
+        <p>MSG_BOX_MESSAGE</p>
+    </div>
+
+</body>
+
+</html>

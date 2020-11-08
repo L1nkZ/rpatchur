@@ -1,4 +1,5 @@
 use std::fs;
+use std::include_str;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -76,6 +77,24 @@ impl Drop for WebViewUserData {
         // Ask the patching thread to stop whenever WebViewUserData is dropped
         let _res = self.patching_thread_tx.try_send(PatcherCommand::Cancel);
     }
+}
+
+/// Creates a message box with the given title and message.
+///
+/// Panics in case of error.
+pub fn msg_box<'a>(title: &'a str, message: &'a str) {
+    let html_template = include_str!("../resources/msg_box.html");
+    let content = html_template.replace("MSG_BOX_MESSAGE", message);
+    let webview = web_view::builder()
+        .title(title)
+        .content(Content::Html(content))
+        .user_data(0)
+        .size(250, 80)
+        .resizable(false)
+        .invoke_handler(|_, _| Ok(()))
+        .build()
+        .unwrap();
+    webview.run().unwrap();
 }
 
 /// Creates a `WebView` object with the appropriate settings for our needs.
