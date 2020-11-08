@@ -1,9 +1,8 @@
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{self, BufReader};
 use std::path::{Path, PathBuf};
 
 use super::get_patcher_name;
-use log::error;
 use serde::Deserialize;
 
 #[derive(Deserialize, Clone)]
@@ -54,28 +53,20 @@ pub struct PatchingConfiguration {
     pub create_grf: bool,      // Create new GRFs if they don't exist
 }
 
-pub fn retrieve_patcher_configuration() -> Option<PatcherConfiguration> {
+pub fn retrieve_patcher_configuration() -> io::Result<PatcherConfiguration> {
     let patcher_name = get_patcher_name()?;
     let configuration_file_name = PathBuf::from(patcher_name).with_extension("yml");
     // Read the YAML content of the file as an instance of `PatcherConfiguration`.
     parse_configuration(configuration_file_name)
 }
 
-fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> Option<PatcherConfiguration> {
-    let config_file = match File::open(config_file_path) {
-        Ok(t) => t,
-        _ => {
-            error!("Cannot open configuration file.");
-            return None;
-        }
-    };
+fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> io::Result<PatcherConfiguration> {
+    let config_file = File::open(config_file_path)?;
     let config_reader = BufReader::new(config_file);
-    let config: PatcherConfiguration = match serde_yaml::from_reader(config_reader) {
-        Ok(t) => t,
-        _ => {
-            error!("Invalid configuration.");
-            return None;
-        }
-    };
-    Some(config)
+    serde_yaml::from_reader(config_reader).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid configuration: {}", e),
+        )
+    })
 }

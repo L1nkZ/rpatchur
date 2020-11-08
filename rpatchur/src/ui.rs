@@ -1,4 +1,5 @@
 use std::fs;
+use std::include_str;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -76,6 +77,31 @@ impl Drop for WebViewUserData {
         // Ask the patching thread to stop whenever WebViewUserData is dropped
         let _res = self.patching_thread_tx.try_send(PatcherCommand::Cancel);
     }
+}
+
+/// Creates a message box with the given title and message.
+///
+/// Panics in case of error.
+pub fn msg_box<S1, S2>(title: S1, message: S2)
+where
+    S1: AsRef<str>,
+    S2: AsRef<str>,
+{
+    // Note(LinkZ): Empirical approximation of the required height for the window.
+    // TODO: Improve
+    let height = 63 + (message.as_ref().len() / 40) * 14;
+    let html_template = include_str!("../resources/msg_box.html");
+    let content = html_template.replace("MSG_BOX_MESSAGE", message.as_ref());
+    let webview = web_view::builder()
+        .title(title.as_ref())
+        .content(Content::Html(content))
+        .user_data(0)
+        .size(310, height as i32)
+        .resizable(false)
+        .invoke_handler(|_, _| Ok(()))
+        .build()
+        .unwrap();
+    webview.run().unwrap();
 }
 
 /// Creates a `WebView` object with the appropriate settings for our needs.
@@ -191,7 +217,7 @@ fn handle_cancel_update(webview: &mut WebView<WebViewUserData>) {
 /// Resets the patcher cache (which is used to keep track of already applied
 /// patches).
 fn handle_reset_cache(_webview: &mut WebView<WebViewUserData>) {
-    if let Some(patcher_name) = get_patcher_name() {
+    if let Ok(patcher_name) = get_patcher_name() {
         let cache_file_path = PathBuf::from(patcher_name).with_extension("dat");
         if let Err(e) = fs::remove_file(cache_file_path) {
             log::warn!("Failed to remove the cache file: {}", e);

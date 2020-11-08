@@ -56,7 +56,7 @@
         function patchingStatusDownloading(nbDownloaded, nbTotal, bytesPerSec) {
             var percentage = (100 * nbDownloaded) / nbTotal;
             if (bytesPerSec > 0) {
-                var downloadSpeed = " (" + humanFileSize(bytesPerSec) + "/s)";
+                var downloadSpeed = " - " + humanFileSize(bytesPerSec) + "/s";
             } else {
                 var downloadSpeed = "";
             }
@@ -73,12 +73,12 @@
         // Note: Function taken from https://stackoverflow.com/a/20732091
         function humanFileSize(size) {
             var i = size == 0 ? 0 : Math.floor(Math.log(size) / Math.log(1024));
-            return (size / Math.pow(1024, i)).toFixed(2) * 1 + ' ' + ['B', 'kB', 'MB', 'GB', 'TB'][i];
+            return (size / Math.pow(1024, i)).toFixed(2) * 1 + ' ' + ['B', 'kiB', 'MiB', 'GiB', 'TiB'][i];
         }
     </script>
 
     <!-- Top Navbar -->
-    <nav class="navbar navbar-expand-md navbar-dark bg-dark">
+    <nav class="navbar navbar-expand-md navbar-dark bg-dark noselect">
         <div class="navbar-collapse collapse w-100 order-1 order-md-0 dual-collapse2">
             <ul class="navbar-nav mr-auto">
                 <li class="nav-item dropdown">
@@ -117,7 +117,7 @@
             </ul>
         </div>
     </nav>
-    <div class="progress position-relative rounded-0 shadow-sm" id="download-progress">
+    <div class="progress position-relative rounded-0 shadow-sm noselect" id="download-progress">
         <small class="justify-content-center d-flex position-absolute w-100"
             id="download-progress-text">Starting...</small>
         <div class="progress-bar progress-bar-striped progress-bar-animated bg-warning" id="download-progress-bar"
