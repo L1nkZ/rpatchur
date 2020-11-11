@@ -1,15 +1,14 @@
-use std::borrow::Cow;
 use std::boxed::Box;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::str;
 
 use crate::grf::crypto::{decrypt_file_content, decrypt_file_name};
+use crate::{GrufError, Result};
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
 use flate2::read::ZlibDecoder;
@@ -30,16 +29,12 @@ pub struct GrfArchive {
 
 impl GrfArchive {
     /// Create a new archive with the underlying object as the reader.
-    pub fn open<P: AsRef<Path>>(grf_path: P) -> io::Result<Self> {
+    pub fn open<P: AsRef<Path>>(grf_path: P) -> Result<Self> {
         let mut file = File::open(grf_path)?;
         let mut grf_header_buf = [0; GRF_HEADER_SIZE];
         file.read_exact(&mut grf_header_buf)?;
-        let (parser_output, grf_header) = parse_grf_header(&grf_header_buf).map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Failed to parse archive (header)",
-            )
-        })?;
+        let (parser_output, grf_header) = parse_grf_header(&grf_header_buf)
+            .map_err(|_| GrufError::parsing_error("Failed to parse archive (header)"))?;
 
         match grf_header.version_major {
             2 => {
@@ -50,10 +45,7 @@ impl GrfArchive {
                 file.read_exact(&mut table_info_buf)?;
                 let (_parser_output, grf_table_info) = parse_grf_table_info_200(&table_info_buf)
                     .map_err(|_| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "Failed to parse archive (table info)",
-                        )
+                        GrufError::parsing_error("Failed to parse archive (table info)")
                     })?;
                 if grf_table_info.table_size_compressed == 0 || grf_table_info.table_size == 0 {
                     return Ok(Self {
@@ -74,19 +66,14 @@ impl GrfArchive {
                 let mut decompressed_table = vec![];
                 let _decompressed_size =
                     decoder.read_to_end(&mut decompressed_table).map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("Failed to decompress file table: {}", e),
-                        )
+                        GrufError::ParsingError(format!("Failed to decompress file table: {}", e))
                     })?;
                 // Parse entries
                 let (_output, entries) = parse_grf_file_entries_200(
                     decompressed_table.as_slice(),
                     grf_header.file_count,
                 )
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidData, "Failed to parse file table")
-                })?;
+                .map_err(|_| GrufError::parsing_error("Failed to parse file table"))?;
                 Ok(Self {
                     obj: Box::new(file),
                     container: GrfContainer {
@@ -99,10 +86,7 @@ impl GrfArchive {
             1 => {
                 // Only versions 1.1, 1.2 and 1.3 are supported
                 if grf_header.version_minor < 1 || grf_header.version_minor > 3 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "Unsupported archive version",
-                    ));
+                    return Err(GrufError::parsing_error("Unsupported archive version"));
                 }
                 let table_size = parser_output.len();
                 if table_size == 0 {
@@ -120,9 +104,8 @@ impl GrfArchive {
                     &parser_output[grf_header.file_table_offset as usize..],
                     grf_header.file_count,
                 )
-                .map_err(|_| {
-                    io::Error::new(io::ErrorKind::InvalidData, "Failed to parse file table")
-                })?;
+                .map_err(|_| GrufError::parsing_error("Failed to parse file table"))?;
+
                 Ok(Self {
                     obj: Box::new(file),
                     container: GrfContainer {
@@ -132,10 +115,7 @@ impl GrfArchive {
                     },
                 })
             }
-            _ => Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "Unsupported archive version",
-            )),
+            _ => Err(GrufError::parsing_error("Unsupported archive version")),
         }
     }
 
@@ -151,14 +131,11 @@ impl GrfArchive {
         self.container.header.version_minor
     }
 
-    pub fn get_entry_raw_data<S: AsRef<str> + Hash>(
-        &mut self,
-        file_path: S,
-    ) -> io::Result<Vec<u8>> {
-        let file_entry = match self.get_file_entry(file_path) {
-            Some(v) => v.clone(),
-            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
-        };
+    pub fn get_entry_raw_data<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Result<Vec<u8>> {
+        let file_entry = self
+            .get_file_entry(file_path)
+            .ok_or(GrufError::EntryNotFound)?
+            .clone();
         if file_entry.size == 0 {
             return Ok(vec![]);
         }
@@ -170,11 +147,11 @@ impl GrfArchive {
         Ok(content)
     }
 
-    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> io::Result<Vec<u8>> {
-        let file_entry = match self.get_file_entry(file_path) {
-            Some(v) => v.clone(),
-            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
-        };
+    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Result<Vec<u8>> {
+        let file_entry = self
+            .get_file_entry(file_path)
+            .ok_or(GrufError::EntryNotFound)?
+            .clone();
         if file_entry.size == 0 {
             return Ok(vec![]);
         }
@@ -194,8 +171,7 @@ impl GrfArchive {
         let mut decompressed_content = Vec::new();
         let decompressed_size = decoder.read_to_end(&mut decompressed_content)?;
         if decompressed_size != file_entry.size {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+            return Err(GrufError::parsing_error(
                 "Decompressed content is not as expected",
             ));
         }
@@ -308,12 +284,12 @@ named!(parse_grf_table_info_200<&[u8], GrfTableInfo2>,
     )
 ));
 
-fn string_from_win_1252(v: &[u8]) -> Result<String, Cow<'static, str>> {
-    let decoder = match encoding_from_whatwg_label("windows-1252") {
-        Some(v) => v,
-        None => return Err(Cow::Borrowed("Decoder unavailable")),
-    };
-    decoder.decode(v, DecoderTrap::Strict)
+fn string_from_win_1252(v: &[u8]) -> Result<String> {
+    let decoder = encoding_from_whatwg_label("windows-1252")
+        .ok_or_else(|| GrufError::parsing_error("Decoder unavailable"))?;
+    decoder
+        .decode(v, DecoderTrap::Strict)
+        .map_err(GrufError::parsing_error)
 }
 
 macro_rules! take_obfuscated_name_101 (

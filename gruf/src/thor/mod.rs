@@ -1,12 +1,11 @@
-use std::borrow::Cow;
 use std::boxed::Box;
 use std::collections::HashMap;
 use std::fs::File;
 use std::hash::{Hash, Hasher};
-use std::io;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use crate::{GrufError, Result};
 use crc::crc32;
 use encoding::label::encoding_from_whatwg_label;
 use encoding::DecoderTrap;
@@ -87,7 +86,7 @@ pub struct ThorArchive<R: ?Sized> {
 }
 
 impl ThorArchive<File> {
-    pub fn open(thor_archive_path: &Path) -> io::Result<ThorArchive<File>> {
+    pub fn open(thor_archive_path: &Path) -> Result<ThorArchive<File>> {
         let file = File::open(thor_archive_path)?;
         ThorArchive::new(file)
     }
@@ -95,7 +94,7 @@ impl ThorArchive<File> {
 
 impl<R: Read + Seek> ThorArchive<R> {
     /// Create a new archive with the underlying object as the reader.
-    pub fn new(mut obj: R) -> io::Result<ThorArchive<R>> {
+    pub fn new(mut obj: R) -> Result<ThorArchive<R>> {
         let thor_patch = parse_thor_patch(&mut obj)?;
         Ok(ThorArchive {
             obj: Box::new(obj),
@@ -115,14 +114,11 @@ impl<R: Read + Seek> ThorArchive<R> {
         self.container.header.target_grf_name.clone()
     }
 
-    pub fn get_entry_raw_data<S: AsRef<str> + Hash>(
-        &mut self,
-        file_path: S,
-    ) -> io::Result<Vec<u8>> {
-        let file_entry = match self.get_file_entry(file_path) {
-            Some(v) => v.clone(),
-            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
-        };
+    pub fn get_entry_raw_data<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Result<Vec<u8>> {
+        let file_entry = self
+            .get_file_entry(file_path)
+            .ok_or(GrufError::EntryNotFound)?
+            .clone();
         if file_entry.size_compressed == 0 {
             return Ok(vec![]);
         }
@@ -134,11 +130,11 @@ impl<R: Read + Seek> ThorArchive<R> {
         Ok(content)
     }
 
-    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> io::Result<Vec<u8>> {
-        let file_entry = match self.get_file_entry(file_path) {
-            Some(v) => v.clone(),
-            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
-        };
+    pub fn read_file_content<S: AsRef<str> + Hash>(&mut self, file_path: S) -> Result<Vec<u8>> {
+        let file_entry = self
+            .get_file_entry(file_path)
+            .ok_or(GrufError::EntryNotFound)?
+            .clone();
         if file_entry.size_compressed == 0 {
             return Ok(vec![]);
         }
@@ -152,8 +148,7 @@ impl<R: Read + Seek> ThorArchive<R> {
         let mut decompressed_content = Vec::new();
         let decompressed_size = decoder.read_to_end(&mut decompressed_content)?;
         if decompressed_size != file_entry.size {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
+            return Err(GrufError::parsing_error(
                 "Decompressed content is not as expected",
             ));
         }
@@ -164,10 +159,10 @@ impl<R: Read + Seek> ThorArchive<R> {
         &mut self,
         file_path: S,
         destination_path: &Path,
-    ) -> io::Result<()> {
+    ) -> Result<()> {
         let content = self.read_file_content(file_path)?;
         let mut file = File::create(destination_path)?;
-        file.write_all(content.as_slice())
+        Ok(file.write_all(content.as_slice())?)
     }
 
     pub fn get_file_entry<S: AsRef<str> + Hash>(&self, file_path: S) -> Option<&ThorFileEntry> {
@@ -179,10 +174,9 @@ impl<R: Read + Seek> ThorArchive<R> {
     }
 
     /// Checks if the container has been unintentionnaly corrupted
-    pub fn is_valid(&mut self) -> io::Result<bool> {
+    pub fn is_valid(&mut self) -> Result<bool> {
         let integrity_data = self.read_file_content(INTEGRITY_FILE_NAME)?;
-        let integrity_data_as_str = string_from_win_1252(integrity_data.as_slice())
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let integrity_data_as_str = string_from_win_1252(integrity_data.as_slice())?;
         let integrity_info = parse_data_integrity_info(integrity_data_as_str.as_str());
         for (file_path, hash) in integrity_info {
             let file_content = match self.read_file_content(file_path) {
@@ -314,12 +308,12 @@ named!(parse_multiple_files_table<&[u8], MultipleFilesTableDesc>,
     )
 ));
 
-fn string_from_win_1252(v: &[u8]) -> Result<String, Cow<'static, str>> {
-    let decoder = match encoding_from_whatwg_label("windows-1252") {
-        Some(v) => v,
-        None => return Err(Cow::Borrowed("Decoder unavailable")),
-    };
-    decoder.decode(v, DecoderTrap::Strict)
+fn string_from_win_1252(v: &[u8]) -> Result<String> {
+    let decoder = encoding_from_whatwg_label("windows-1252")
+        .ok_or_else(|| GrufError::parsing_error("Decoder unavailable"))?;
+    decoder
+        .decode(v, DecoderTrap::Strict)
+        .map_err(GrufError::parsing_error)
 }
 
 macro_rules! take_string_ansi (
@@ -387,34 +381,23 @@ named!(parse_multiple_files_entries<&[u8], HashMap<String, ThorFileEntry>>,
     })
 );
 
-pub fn parse_thor_patch<R: Seek + Read>(reader: &mut R) -> io::Result<ThorContainer> {
+pub fn parse_thor_patch<R: Seek + Read>(reader: &mut R) -> Result<ThorContainer> {
     const HEADER_EXTENDED_MAX_SIZE: usize =
         HEADER_MAX_SIZE + MULTIPLE_FILES_TABLE_SIZE + SINGLE_FILE_ENTRY_MAX_SIZE;
     let mut thor_header_buf = Vec::with_capacity(HEADER_EXTENDED_MAX_SIZE);
     let mut reader_chunk = reader.take(thor_header_buf.capacity() as u64);
     reader_chunk.read_to_end(&mut thor_header_buf)?;
     let (output, header) = parse_thor_header(&thor_header_buf)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to parse THOR header"))?;
+        .map_err(|_| GrufError::parsing_error("Failed to parse THOR header"))?;
     match header.mode {
-        ThorMode::Invalid => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "Invalid THOR header mode",
-        )),
+        ThorMode::Invalid => Err(GrufError::parsing_error("Invalid THOR header mode")),
         ThorMode::SingleFile => {
             // Parse table
-            let (output, table) = parse_single_file_table(output).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Failed to parse THOR file table",
-                )
-            })?;
+            let (output, table) = parse_single_file_table(output)
+                .map_err(|_| GrufError::parsing_error("Failed to parse THOR file table"))?;
             // Parse the single entry
-            let (output, mut entry) = parse_single_file_entry(output).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Failed to parse THOR file entry",
-                )
-            })?;
+            let (output, mut entry) = parse_single_file_entry(output)
+                .map_err(|_| GrufError::parsing_error("Failed to parse THOR file entry"))?;
             entry.offset = output.as_ptr() as u64 - thor_header_buf.as_ptr() as u64;
             Ok(ThorContainer {
                 header,
@@ -426,18 +409,11 @@ pub fn parse_thor_patch<R: Seek + Read>(reader: &mut R) -> io::Result<ThorContai
             })
         }
         ThorMode::MultipleFiles => {
-            let (output, table) = parse_multiple_files_table(output).map_err(|_| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Failed to parse THOR file table",
-                )
-            })?;
+            let (output, table) = parse_multiple_files_table(output)
+                .map_err(|_| GrufError::parsing_error("Failed to parse THOR file table"))?;
             let consumed_bytes = output.as_ptr() as u64 - thor_header_buf.as_ptr() as u64;
             if table.file_table_offset < consumed_bytes {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Invalid THOR file table offset",
-                ));
+                return Err(GrufError::parsing_error("Invalid THOR file table offset"));
             }
             // Decompress the table with zlib
             reader.seek(SeekFrom::Start(table.file_table_offset))?;
@@ -450,12 +426,7 @@ pub fn parse_thor_patch<R: Seek + Read>(reader: &mut R) -> io::Result<ThorContai
             let _decompressed_size = decoder.read_to_end(&mut decompressed_table)?;
             // Parse multiple entries
             let (_, entries) = parse_multiple_files_entries(decompressed_table.as_slice())
-                .map_err(|_| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "Failed to parse THOR file entries",
-                    )
-                })?;
+                .map_err(|_| GrufError::parsing_error("Failed to parse THOR file entries"))?;
             Ok(ThorContainer {
                 header,
                 table: ThorTable::MultipleFiles(table),
@@ -512,10 +483,10 @@ mod tests {
             assert_eq!(thor_archive.file_count(), 1);
             assert_eq!(thor_archive.target_grf_name(), "");
             assert!(!thor_archive.use_grf_merging());
-            assert_eq!(
-                thor_archive.is_valid().unwrap_err().kind(),
-                std::io::ErrorKind::NotFound
-            );
+            assert!(matches!(
+                thor_archive.is_valid().unwrap_err(),
+                GrufError::EntryNotFound
+            ));
             let entry = thor_archive.get_entries().next().unwrap();
             assert_eq!(entry.offset, 52);
             assert_eq!(entry.size, 22528);
@@ -549,10 +520,10 @@ mod tests {
             assert_eq!(thor_archive.file_count(), expected_content.len());
             assert_eq!(thor_archive.target_grf_name(), "");
             assert!(!thor_archive.use_grf_merging());
-            assert_eq!(
-                thor_archive.is_valid().unwrap_err().kind(),
-                std::io::ErrorKind::NotFound
-            );
+            assert!(matches!(
+                thor_archive.is_valid().unwrap_err(),
+                GrufError::EntryNotFound
+            ));
             check_dir2_thor_entries(&mut thor_archive);
         }
         {

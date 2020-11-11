@@ -2,14 +2,14 @@ use std::boxed::Box;
 use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fs::{File, OpenOptions};
-use std::io;
-use std::io::{Cursor, Read, Seek, SeekFrom, Write};
+use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use crate::grf::dyn_alloc;
 use crate::grf::dyn_alloc::AvailableChunkList;
 use crate::grf::{GrfArchive, GRF_HEADER_MAGIC, GRF_HEADER_SIZE};
 use crate::thor::ThorArchive;
+use crate::{GrufError, Result};
 use encoding::label::encoding_from_whatwg_label;
 use encoding::EncoderTrap;
 use flate2::write::ZlibEncoder;
@@ -55,23 +55,21 @@ struct SerializableGrfFileEntry200 {
     offset: u32,
 }
 
-fn serialize_win1252cstring<W>(string: &str, mut writer: W) -> io::Result<()>
+fn serialize_win1252cstring<W>(string: &str, mut writer: W) -> Result<()>
 where
     W: Write,
 {
-    let decoder = match encoding_from_whatwg_label("windows-1252") {
-        Some(v) => v,
-        None => return Err(io::Error::new(io::ErrorKind::Other, "Encoder unavailable")),
-    };
+    let decoder = encoding_from_whatwg_label("windows-1252")
+        .ok_or_else(|| GrufError::serialization_error("Encoder unavailable"))?;
     let mut vec = decoder
         .encode(string, EncoderTrap::Strict)
-        .map_err(|_| io::Error::new(io::ErrorKind::Other, "Encoding failed"))?;
+        .map_err(|_| GrufError::serialization_error("Encoding failed"))?;
     vec.push(0); // NUL char terminator
-    writer.write_all(vec.as_slice())
+    Ok(writer.write_all(vec.as_slice())?)
 }
 
 impl<W: Write + Seek> GrfArchiveBuilder<W> {
-    pub fn create(mut obj: W, version_major: u32, version_minor: u32) -> io::Result<Self> {
+    pub fn create(mut obj: W, version_major: u32, version_minor: u32) -> Result<Self> {
         let start_offset = obj.seek(io::SeekFrom::Current(0)).unwrap_or(0);
         // Placeholder for the GRF header
         obj.write_all(&[0; GRF_HEADER_SIZE])?;
@@ -90,11 +88,11 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         &mut self,
         archive: &mut GrfArchive,
         relative_path: String,
-    ) -> io::Result<()> {
-        let entry = match archive.get_file_entry(&relative_path) {
-            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
-            Some(v) => v.clone(),
-        };
+    ) -> Result<()> {
+        let entry = archive
+            .get_file_entry(&relative_path)
+            .ok_or(GrufError::EntryNotFound)?
+            .clone();
         let content = archive.get_entry_raw_data(&relative_path)?;
         let offset = {
             if let Some(grf_entry) = self.entries.get(&relative_path) {
@@ -127,11 +125,11 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         &mut self,
         thor_archive: &mut ThorArchive<R>,
         relative_path: String,
-    ) -> io::Result<()> {
-        let entry = match thor_archive.get_file_entry(&relative_path) {
-            None => return Err(io::Error::new(io::ErrorKind::NotFound, "File not found")),
-            Some(v) => v.clone(),
-        };
+    ) -> Result<()> {
+        let entry = thor_archive
+            .get_file_entry(&relative_path)
+            .ok_or(GrufError::EntryNotFound)?
+            .clone();
         let content = thor_archive.get_entry_raw_data(&relative_path)?;
         let offset = {
             if let Some(grf_entry) = self.entries.get(&relative_path) {
@@ -159,12 +157,12 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         Ok(())
     }
 
-    pub fn add_file<R: Read>(&mut self, relative_path: String, mut data: R) -> io::Result<()> {
+    pub fn add_file<R: Read>(&mut self, relative_path: String, mut data: R) -> Result<()> {
         // Compress it
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
         let data_size = io::copy(data.by_ref(), &mut encoder)?;
-        let data_size_u32 = u32::try_from(data_size)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "File too big"))?;
+        let data_size_u32 =
+            u32::try_from(data_size).map_err(|_| GrufError::serialization_error("File too big"))?;
         // Write compressed data
         let compressed_data = encoder.finish()?;
         let compressed_data_size = compressed_data.len();
@@ -205,23 +203,18 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         }
     }
 
-    pub fn finish(&mut self) -> io::Result<()> {
+    pub fn finish(&mut self) -> Result<()> {
         if self.finished {
             return Ok(());
         }
         self.finished = true;
 
         let v_file_count = i32::try_from(self.entries.len() + 7)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Too many file entries"))?;
+            .map_err(|_| GrufError::serialization_error("Too many file entries"))?;
         let file_table_offset = match self.version_major {
             2 => self.write_grf_table_200()?,
             1 => std::unimplemented!(), // TODO(LinkZ): Implement
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "Wrong file format version",
-                ))
-            }
+            _ => return Err(GrufError::serialization_error("Wrong file format version")),
         };
         // Update the header
         self.obj.seek(SeekFrom::Start(self.start_offset))?;
@@ -233,7 +226,7 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
         )
     }
 
-    fn write_grf_table_200(&mut self) -> io::Result<u64> {
+    fn write_grf_table_200(&mut self) -> Result<u64> {
         let mut table: Vec<u8> = Vec::new();
         // Generate table and write files' content
         for (relative_path, entry) in &self.entries {
@@ -270,7 +263,7 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
 }
 
 impl GrfArchiveBuilder<File> {
-    pub fn open<P: AsRef<Path>>(grf_path: P) -> io::Result<Self> {
+    pub fn open<P: AsRef<Path>>(grf_path: P) -> Result<Self> {
         let mut grf_archive = GrfArchive::open(&grf_path)?;
         let chunks = dyn_alloc::list_available_chunks(&mut grf_archive)?;
         let mut entries = HashMap::with_capacity(grf_archive.file_count());
@@ -310,7 +303,7 @@ fn write_grf_header<W: Write>(
     file_table_offset: u32,
     v_file_count: i32,
     writer: &mut W,
-) -> io::Result<()> {
+) -> Result<()> {
     let grf_header = SerializableGrfHeader {
         key: GRF_FIXED_KEY,
         file_table_offset,
@@ -320,7 +313,7 @@ fn write_grf_header<W: Write>(
     };
     writer.write_all(GRF_HEADER_MAGIC.as_bytes())?;
     bincode::serialize_into(writer, &grf_header)
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "Failed to serialize header"))?;
+        .map_err(|_| GrufError::serialization_error("Failed to serialize header"))?;
     Ok(())
 }
 

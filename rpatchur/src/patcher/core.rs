@@ -1,6 +1,6 @@
 use std::env;
 use std::fs::File;
-use std::io::{self, prelude::Seek, SeekFrom, Write};
+use std::io::{prelude::Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -9,8 +9,10 @@ use super::cancellation::{check_for_cancellation, wait_for_cancellation, Interru
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::ui::{PatchingStatus, UIController};
+use anyhow::{anyhow, Context, Result};
 use futures::executor::block_on;
 use gruf::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
+use gruf::GrufError;
 use tokio::sync::mpsc;
 use url::Url;
 
@@ -38,27 +40,25 @@ pub async fn patcher_thread_routine(
         return;
     }
 
-    if let Err(err_msg) =
-        interruptible_patcher_routine(&ui_controller, config, patcher_thread_rx).await
+    if let Err(err) = interruptible_patcher_routine(&ui_controller, config, patcher_thread_rx).await
     {
-        log::error!("{}", err_msg);
+        log::error!("{:#}", err);
         ui_controller
-            .dispatch_patching_status(PatchingStatus::Error(err_msg))
+            .dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)))
             .await;
     }
 }
 
 /// Returns when a start command is received, ignoring all other commands that might be received.
 /// Returns an error if the other end of the channel happens to be closed while waiting.
-async fn wait_for_start_command(rx: &mut mpsc::Receiver<PatcherCommand>) -> Result<(), String> {
+async fn wait_for_start_command(rx: &mut mpsc::Receiver<PatcherCommand>) -> Result<()> {
     loop {
-        match rx.recv().await {
-            None => return Err("Channel has been closed".to_string()),
-            Some(v) => {
-                if let PatcherCommand::Start = v {
-                    break;
-                }
-            }
+        let cmd = rx
+            .recv()
+            .await
+            .ok_or_else(|| anyhow!("Channel has been closed"))?;
+        if let PatcherCommand::Start = cmd {
+            break;
         }
     }
     Ok(())
@@ -72,17 +72,16 @@ async fn interruptible_patcher_routine(
     ui_controller: &UIController,
     config: PatcherConfiguration,
     mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
-) -> Result<(), String> {
+) -> Result<()> {
     log::info!("Patching started");
     let patch_list_url = Url::parse(config.web.plist_url.as_str()).unwrap();
     let mut patch_list = fetch_patch_list(patch_list_url)
         .await
-        .map_err(|e| format!("Failed to retrieve the patch list: {}.", e))?;
+        .context("Failed to retrieve the patch list")?;
     log::info!("Successfully fetched patch list: {:?}", patch_list);
 
     // Try to read cache
-    let cache_file_path =
-        get_cache_file_path().map_err(|_| "Failed to resolve patcher name.".to_string())?;
+    let cache_file_path = get_cache_file_path().context("Failed to resolve patcher name")?;
     if let Ok(patcher_cache) = read_cache_file(&cache_file_path).await {
         // Ignore already applied patches if needed
         // First we verify that our cached index looks relevant
@@ -106,8 +105,8 @@ async fn interruptible_patcher_routine(
     )
     .await
     .map_err(|e| match e {
-        InterruptibleFnError::Err(msg) => format!("Failed to download patches: {}.", msg),
-        InterruptibleFnError::Interrupted => "Patching was canceled".to_string(),
+        InterruptibleFnError::Err(msg) => anyhow!("Failed to download patches: {}", msg),
+        InterruptibleFnError::Interrupted => anyhow!("Patching was canceled"),
     })?;
     log::info!("Done");
 
@@ -122,8 +121,8 @@ async fn interruptible_patcher_routine(
     )
     .await
     .map_err(|e| match e {
-        InterruptibleFnError::Err(msg) => format!("Failed to apply patches: {}.", msg),
-        InterruptibleFnError::Interrupted => "Patching was canceled".to_string(),
+        InterruptibleFnError::Err(msg) => anyhow!("Failed to apply patches: {}", msg),
+        InterruptibleFnError::Interrupted => anyhow!("Patching was canceled"),
     })?;
     log::info!("Done");
     ui_controller
@@ -137,23 +136,20 @@ async fn interruptible_patcher_routine(
 /// `patch_list_url` argument.
 ///
 /// Returns a vector of `ThorPatchInfo` in case of success.
-async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList, String> {
+async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList> {
     let resp = reqwest::get(patch_list_url)
         .await
-        .map_err(|e| format!("Failed to GET URL: {}", e))?;
+        .context("Failed to GET URL")?;
     if !resp.status().is_success() {
-        return Err("Patch list file not found on the remote server".to_string());
+        return Err(anyhow!("Patch list file not found on the remote server"));
     }
-    let patch_index_content = resp
-        .text()
-        .await
-        .map_err(|_| "Invalid responde body".to_string())?;
+    let patch_index_content = resp.text().await.context("Invalid responde body")?;
     log::info!("Parsing patch index...");
     Ok(thor::patch_list_from_string(patch_index_content.as_str()))
 }
 
 /// Returns the patcher cache file's name as a `PathBuf` on success.
-fn get_cache_file_path() -> io::Result<PathBuf> {
+fn get_cache_file_path() -> Result<PathBuf> {
     let patcher_name = get_patcher_name()?;
     Ok(PathBuf::from(patcher_name).with_extension("dat"))
 }
@@ -219,7 +215,7 @@ async fn download_patches(
             })?;
             match archive.is_valid() {
                 Err(e) => {
-                    if let io::ErrorKind::NotFound = e.kind() {
+                    if let GrufError::EntryNotFound = e {
                     } else {
                         // Only consider this an error if the integrity file was found
                         return Err(InterruptibleFnError::Err(format!(
