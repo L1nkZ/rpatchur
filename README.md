@@ -9,7 +9,7 @@ RPatchur
 Screenshot
 ----------
 
-![screen](https://i.imgur.com/WzZnJV4.png)
+![screen](https://i.imgur.com/mE51Iif.png)
 
 Features
 --------
@@ -52,6 +52,8 @@ $ git clone https://github.com/L1nkZ/rpatchur.git
 $ cd rpatchur
 $ cargo build --release
 ```
+
+Note: Rust 1.42 or later is required.
 
 Additional Notes
 ----------------
