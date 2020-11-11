@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io;
 use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
-use gruf;
+use anyhow::Result;
 use gruf::grf::{GrfArchive, GrfArchiveBuilder};
 use gruf::thor::{ThorArchive, ThorFileEntry};
 
@@ -40,7 +39,7 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
     create_if_needed: bool,
     grf_file_path: P,
     thor_archive: &mut ThorArchive<R>,
-) -> gruf::Result<()> {
+) -> Result<()> {
     if !grf_file_path.as_ref().exists() && create_if_needed {
         // Create a new GRF file if needed
         let new_grf = fs::File::create(&grf_file_path)?;
@@ -59,7 +58,7 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
 fn apply_patch_to_grf_ip<P: AsRef<Path>, R: Read + Seek>(
     grf_file_path: P,
     thor_archive: &mut ThorArchive<R>,
-) -> gruf::Result<()> {
+) -> Result<()> {
     let mut builder = GrfArchiveBuilder::open(grf_file_path)?;
     let mut thor_entries: Vec<ThorFileEntry> = thor_archive
         .get_entries()
@@ -83,7 +82,7 @@ fn apply_patch_to_grf_ip<P: AsRef<Path>, R: Read + Seek>(
 fn apply_patch_to_grf_oop<P: AsRef<Path>, R: Read + Seek>(
     grf_file_path: P,
     thor_archive: &mut ThorArchive<R>,
-) -> gruf::Result<()> {
+) -> Result<()> {
     // Rename file to back it up
     let mut backup_file_path = grf_file_path.as_ref().to_path_buf();
     backup_file_path.set_extension("grf.bak");
@@ -148,7 +147,7 @@ fn apply_patch_to_grf_oop<P: AsRef<Path>, R: Read + Seek>(
 pub fn apply_patch_to_disk<P: AsRef<Path>, R: Read + Seek>(
     root_directory: P,
     thor_archive: &mut ThorArchive<R>,
-) -> io::Result<()> {
+) -> Result<()> {
     // TODO(LinkZ): Save original files before updating/removing them in order
     // to be able to restore them in case of failure
     // TODO(LinkZ): Make async?
@@ -349,7 +348,7 @@ mod tests {
     fn patch_maintained_integrity(
         thor_file_path: &PathBuf,
         grf_file_path: &PathBuf,
-    ) -> gruf::Result<bool> {
+    ) -> Result<bool> {
         let mut thor_archive = ThorArchive::open(&thor_file_path)?;
         let mut grf_archive = GrfArchive::open(&grf_file_path)?;
         let thor_entries: Vec<ThorFileEntry> = thor_archive.get_entries().cloned().collect();

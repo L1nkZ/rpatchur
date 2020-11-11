@@ -28,6 +28,7 @@ tempfile = "3.1"
 log = { version = "0.4", features = ["release_max_level_off"] }
 simple_logger = "1.10"
 bincode = "1.2"
+anyhow = "1.0"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"

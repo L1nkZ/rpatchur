@@ -21,7 +21,7 @@ fn main() {
         Err(e) => {
             let err_msg = "Failed to retrieve the patcher's configuration";
             log::error!("{}", err_msg);
-            ui::msg_box(WINDOW_TITLE, format!("<b>Error:</b> {}: {}.", err_msg, e));
+            ui::msg_box(WINDOW_TITLE, format!("<b>Error:</b> {}: {:#}.", err_msg, e));
             return;
         }
         Ok(v) => v,
