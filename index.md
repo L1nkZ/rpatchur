@@ -14,7 +14,7 @@ RPatchur is a customizable, cross-platform patcher for Ragnarok Online clients.
 
 ## How to Build
 
-Rust version 1.40.0 or later is required to build the project.
+Rust version 1.42.0 or later is required to build the project.
 
 ```bash
 $ git clone https://github.com/L1nkZ/rpatchur.git
