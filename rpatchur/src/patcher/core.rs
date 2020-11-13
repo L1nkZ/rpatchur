@@ -2,18 +2,22 @@ use std::env;
 use std::fs::File;
 use std::io::{prelude::Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::cache::{read_cache_file, write_cache_file, PatcherCache};
-use super::cancellation::{check_for_cancellation, wait_for_cancellation, InterruptibleFnError};
+use super::cancellation::{
+    check_for_cancellation, wait_for_cancellation, InterruptibleFnError, InterruptibleFnResult,
+};
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::ui::{PatchingStatus, UIController};
 use anyhow::{anyhow, Context, Result};
 use futures::executor::block_on;
+use futures::stream::{StreamExt, TryStreamExt};
 use gruf::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
 use gruf::GrufError;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use url::Url;
 
 /// Representation of a pending patch (a patch that's been downloaded but has
@@ -96,7 +100,7 @@ async fn interruptible_patcher_routine(
     // Try fetching patch files
     log::info!("Downloading patches... ");
     let patch_url = Url::parse(config.web.patch_url.as_str()).unwrap();
-    let pending_patch_queue = download_patches(
+    let pending_patch_queue = download_patches_concurrent(
         patch_url,
         patch_list,
         config.patching.check_integrity,
@@ -160,120 +164,173 @@ fn get_cache_file_path() -> Result<PathBuf> {
 /// contained in the 'patch_url' argument.
 ///
 /// This function is interruptible.
-async fn download_patches(
+async fn download_patches_concurrent(
     patch_url: Url,
     patch_list: ThorPatchList,
     ensure_integrity: bool,
     ui_controller: &UIController,
     patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
-) -> Result<Vec<PendingPatch>, InterruptibleFnError> {
+) -> InterruptibleFnResult<Vec<PendingPatch>> {
     let patch_count = patch_list.len();
-    let mut pending_patch_queue = Vec::with_capacity(patch_count);
     ui_controller
         .dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count, 0))
         .await;
-    for (patch_number, patch) in patch_list.into_iter().enumerate() {
-        let mut tmp_file = tempfile::tempfile().map_err(|e| {
-            InterruptibleFnError::Err(format!("Failed to create temporary file: {}.", e))
-        })?;
+    // Download file in a cancelable manner
+    tokio::select! {
+        cancel_res = wait_for_cancellation(patching_thread_rx) => return Err(cancel_res),
+        download_res = download_patches_concurrent_inner(patch_url, patch_list, ensure_integrity, ui_controller) => {
+            download_res.map_err(|e| InterruptibleFnError::Err(format!("{:#}", e)))
+        },
+    }
+}
+
+/// Actual implementation of the concurrent file download
+async fn download_patches_concurrent_inner(
+    patch_url: Url,
+    patch_list: ThorPatchList,
+    ensure_integrity: bool,
+    ui_controller: &UIController,
+) -> Result<Vec<PendingPatch>> {
+    const CONCURRENT_DOWNLOADS: usize = 32;
+    // Shared reqwest client
+    let client = reqwest::Client::new();
+    // Shared value that contains the number of downloaded patches
+    let patch_number = Arc::new(Mutex::new(0 as usize));
+    // Shared tuple that's used to compute the download speed
+    let shared_progress_state = Arc::new(Mutex::new((Instant::now(), 0 as u64)));
+    let one_second = Duration::from_secs(1);
+
+    // Collect stream of "PendingPatch" concurrently with an unordered_buffer
+    let patch_count = patch_list.len();
+    futures::stream::iter(patch_list.into_iter().map(|patch_info| async {
+        let client = &client;
+        let patch_file_url = patch_url
+            .join(patch_info.file_name.as_str())
+            .context("Failed to generate URL for patch file")?;
+
+        let mut tmp_file = tempfile::tempfile().context("Failed to create temporary file")?;
         // Setup a progress callback that'll send the current download speed to the UI
-        let one_second = Duration::from_secs(1);
-        let mut instant = Instant::now();
+        let shared_state = shared_progress_state.clone();
+        let patch_number_callback = patch_number.clone();
         let mut last_downloaded_bytes: u64 = 0;
         let mut progress_callback = move |dl_now, _| {
-            let elapsed_time = instant.elapsed();
-            if elapsed_time >= one_second {
-                instant = Instant::now();
-                let dl_delta = dl_now - last_downloaded_bytes;
-                let downloaded_bytes_per_sec =
-                    (dl_delta as f32 / elapsed_time.as_secs_f32()).round() as u64;
-                block_on(ui_controller.dispatch_patching_status(
-                    PatchingStatus::DownloadInProgress(
-                        patch_number,
-                        patch_count,
-                        downloaded_bytes_per_sec,
-                    ),
-                ));
-                last_downloaded_bytes = dl_now;
-            }
-        };
-        // Download file in a cancelable manner
-        tokio::select! {
-            cancel_res = wait_for_cancellation(patching_thread_rx) => return Err(cancel_res),
-            download_res = download_patch_to_file(&patch_url, &patch, &mut tmp_file, &mut progress_callback) => {
-                if let Err(msg) = download_res {
-                    return Err(InterruptibleFnError::Err(msg));
+            let dl_delta = dl_now - last_downloaded_bytes;
+            // Return download speed if the required time has elapsed (1s)
+            let downloaded_bytes_per_sec = block_on(async {
+                let mut shared_state = shared_state.lock().await;
+                shared_state.1 += dl_delta;
+                if shared_state.0.elapsed() >= one_second {
+                    let downloaded_bytes_per_sec = (shared_state.1 as f32
+                        / shared_state.0.elapsed().as_secs_f32())
+                    .round() as u64;
+                    shared_state.0 = Instant::now();
+                    shared_state.1 = 0;
+                    Some(downloaded_bytes_per_sec)
+                } else {
+                    None
                 }
-            },
-        }
+            });
+            // If speed is "available", update UI
+            if let Some(downloaded_bytes_per_sec) = downloaded_bytes_per_sec {
+                block_on(async {
+                    let patch_number = async { *patch_number_callback.lock().await }.await;
+                    ui_controller
+                        .dispatch_patching_status(PatchingStatus::DownloadInProgress(
+                            patch_number,
+                            patch_count,
+                            downloaded_bytes_per_sec,
+                        ))
+                        .await
+                });
+            }
+            last_downloaded_bytes = dl_now;
+        };
+
+        download_patch_to_file(
+            client,
+            &patch_file_url,
+            &patch_info,
+            &mut tmp_file,
+            &mut progress_callback,
+        )
+        .await?;
 
         // Check the archive's integrity if required
-        if ensure_integrity {
-            let _ = tmp_file.seek(SeekFrom::Start(0));
-            let mut archive = ThorArchive::new(&tmp_file).map_err(|e| {
-                InterruptibleFnError::Err(format!("Failed to check archive's integrity: {}", e))
-            })?;
-            match archive.is_valid() {
-                Err(e) => {
-                    if let GrufError::EntryNotFound = e {
-                    } else {
-                        // Only consider this an error if the integrity file was found
-                        return Err(InterruptibleFnError::Err(format!(
-                            "'{}' archive's integrity file is invalid: {}",
-                            patch.file_name,
-                            e.to_string(),
-                        )));
-                    }
-                }
-                Ok(false) => {
-                    // Integrity check failed
-                    return Err(InterruptibleFnError::Err(format!(
-                        "Archive '{}' is corrupt",
-                        patch.file_name
-                    )));
-                }
-                Ok(true) => {
-                    // Archive's fine
-                }
-            }
+        if ensure_integrity
+            && !is_archive_valid(&mut tmp_file).map_err(|_| {
+                anyhow!(
+                    "Failed to check archive's integrity: '{}'",
+                    patch_info.file_name
+                )
+            })?
+        {
+            return Err(anyhow!("Archive '{}' is corrupt", patch_info.file_name));
         }
 
-        // File's been downloaded, seek to start and add it to the queue
-        let _ = tmp_file.seek(SeekFrom::Start(0));
-        pending_patch_queue.push(PendingPatch {
-            info: patch,
-            local_file: tmp_file,
-        });
         // Update status
-        ui_controller
-            .dispatch_patching_status(PatchingStatus::DownloadInProgress(
-                1 + patch_number,
-                patch_count,
-                0,
-            ))
-            .await;
+        {
+            // Take the lock, update and return the current value
+            let mut patch_number = patch_number.lock().await;
+            *patch_number += 1;
+        }
+        // File's been downloaded, seek to start and add it to the queue
+        tmp_file
+            .seek(SeekFrom::Start(0))
+            .context("Failed to seek downloaded file")?;
+        Ok(PendingPatch {
+            info: patch_info,
+            local_file: tmp_file,
+        }) as Result<PendingPatch>
+    }))
+    .buffer_unordered(CONCURRENT_DOWNLOADS)
+    .try_collect()
+    .await
+}
+
+fn is_archive_valid(tmp_file: &mut File) -> InterruptibleFnResult<bool> {
+    tmp_file
+        .seek(SeekFrom::Start(0))
+        .map_err(|e| InterruptibleFnError::Err(format!("Failed to seek file: {}", e)))?;
+    let mut archive = ThorArchive::new(tmp_file)
+        .map_err(|e| InterruptibleFnError::Err(format!("Failed to open archive: {}", e)))?;
+    match archive.is_valid() {
+        Err(e) => {
+            if let GrufError::EntryNotFound = e {
+                // No integrity file present, consider the file valid
+                Ok(true)
+            } else {
+                // Only consider this an error if the integrity file was found
+                return Err(InterruptibleFnError::Err(format!(
+                    "Archive's integrity file is invalid: {}",
+                    e.to_string(),
+                )));
+            }
+        }
+        Ok(v) => Ok(v),
     }
-    Ok(pending_patch_queue)
 }
 
 /// Downloads a single patch described with a `ThorPatchInfo`.
 async fn download_patch_to_file<CB: FnMut(u64, u64)>(
+    client: &reqwest::Client,
     patch_url: &Url,
     patch: &ThorPatchInfo,
     tmp_file: &mut File,
     mut progress_callback: CB,
-) -> Result<(), String> {
+) -> Result<()> {
     let patch_file_url = patch_url.join(patch.file_name.as_str()).map_err(|_| {
-        format!(
+        anyhow!(
             "Invalid file name '{}' given in patch list file.",
             patch.file_name
         )
     })?;
-    let mut resp = reqwest::get(patch_file_url)
+    let mut resp = client
+        .get(patch_file_url)
+        .send()
         .await
-        .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?;
+        .map_err(|e| anyhow!("Failed to download file '{}': {}.", patch.file_name, e))?;
     if !resp.status().is_success() {
-        return Err(format!(
+        return Err(anyhow!(
             "Patch file '{}' not found on the remote server.",
             patch.file_name
         ));
@@ -283,18 +340,19 @@ async fn download_patch_to_file<CB: FnMut(u64, u64)>(
     while let Some(chunk) = resp
         .chunk()
         .await
-        .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?
+        .map_err(|e| anyhow!("Failed to download file '{}': {}.", patch.file_name, e))?
     {
         tmp_file
             .write_all(&chunk[..])
-            .map_err(|e| format!("Failed to download file '{}': {}.", patch.file_name, e))?;
+            .map_err(|e| anyhow!("Failed to download file '{}': {}.", patch.file_name, e))?;
         downloaded_bytes += chunk.len() as u64;
         progress_callback(downloaded_bytes, bytes_to_download);
     }
     tmp_file.sync_all().map_err(|e| {
-        format!(
+        anyhow!(
             "Failed to sync downloaded file '{}': {}.",
-            patch.file_name, e
+            patch.file_name,
+            e
         )
     })?;
     Ok(())
@@ -310,7 +368,7 @@ async fn apply_patches<P: AsRef<Path>>(
     cache_file_path: P,
     ui_controller: &UIController,
     patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
-) -> Result<(), InterruptibleFnError> {
+) -> InterruptibleFnResult<()> {
     let current_working_dir = env::current_dir().map_err(|e| {
         InterruptibleFnError::Err(format!(
             "Failed to resolve current working directory: {}.",
@@ -414,9 +472,15 @@ mod tests {
             file_name: patch_name.to_string(),
         };
         let mut tmp_file = tempfile::tempfile().unwrap();
-        download_patch_to_file(&from_url, &patch_info, &mut tmp_file, |_, _| {})
-            .await
-            .unwrap();
+        download_patch_to_file(
+            &reqwest::Client::new(),
+            &from_url,
+            &patch_info,
+            &mut tmp_file,
+            |_, _| {},
+        )
+        .await
+        .unwrap();
 
         tmp_file.seek(SeekFrom::Start(0)).unwrap();
         let mut file_content = Vec::with_capacity(data_size);
