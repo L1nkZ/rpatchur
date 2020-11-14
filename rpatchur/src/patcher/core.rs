@@ -1,6 +1,4 @@
 use std::env;
-use std::fs::File;
-use std::io::{prelude::Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -17,6 +15,8 @@ use futures::executor::block_on;
 use futures::stream::{StreamExt, TryStreamExt};
 use gruf::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
 use gruf::GrufError;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Mutex};
 use url::Url;
 
@@ -25,7 +25,7 @@ use url::Url;
 #[derive(Debug)]
 struct PendingPatch {
     info: thor::ThorPatchInfo,
-    local_file: File,
+    local_file_path: PathBuf,
 }
 
 /// Entry point of the patching task.
@@ -99,10 +99,13 @@ async fn interruptible_patcher_routine(
 
     // Try fetching patch files
     log::info!("Downloading patches... ");
-    let patch_url = Url::parse(config.web.patch_url.as_str()).unwrap();
+    let patch_url =
+        Url::parse(config.web.patch_url.as_str()).context("Failed to parse 'patch_url'")?;
+    let tmp_dir = tempfile::tempdir().context("Failed to create temporary directory")?;
     let pending_patch_queue = download_patches_concurrent(
         patch_url,
         patch_list,
+        tmp_dir.path(),
         config.patching.check_integrity,
         &ui_controller,
         &mut patcher_thread_rx,
@@ -164,33 +167,46 @@ fn get_cache_file_path() -> Result<PathBuf> {
 /// contained in the 'patch_url' argument.
 ///
 /// This function is interruptible.
-async fn download_patches_concurrent(
+async fn download_patches_concurrent<P>(
     patch_url: Url,
     patch_list: ThorPatchList,
+    download_directory: P,
     ensure_integrity: bool,
     ui_controller: &UIController,
     patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
-) -> InterruptibleFnResult<Vec<PendingPatch>> {
+) -> InterruptibleFnResult<Vec<PendingPatch>>
+where
+    P: AsRef<Path>,
+{
     let patch_count = patch_list.len();
     ui_controller
         .dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count, 0))
         .await;
-    // Download file in a cancelable manner
-    tokio::select! {
+    // Download files in a cancelable manner
+    let mut vec = tokio::select! {
         cancel_res = wait_for_cancellation(patching_thread_rx) => return Err(cancel_res),
-        download_res = download_patches_concurrent_inner(patch_url, patch_list, ensure_integrity, ui_controller) => {
+        download_res = download_patches_concurrent_inner(patch_url, patch_list, download_directory, ensure_integrity, ui_controller) => {
             download_res.map_err(|e| InterruptibleFnError::Err(format!("{:#}", e)))
         },
-    }
+    }?;
+    // Sort patches by index before returning
+    vec.sort_by(|l, r| l.info.index.cmp(&r.info.index));
+    Ok(vec)
 }
 
 /// Actual implementation of the concurrent file download
-async fn download_patches_concurrent_inner(
+///
+/// Returns an unordered vector of `PendingPatch`.
+async fn download_patches_concurrent_inner<P>(
     patch_url: Url,
     patch_list: ThorPatchList,
+    download_directory: P,
     ensure_integrity: bool,
     ui_controller: &UIController,
-) -> Result<Vec<PendingPatch>> {
+) -> Result<Vec<PendingPatch>>
+where
+    P: AsRef<Path>,
+{
     const CONCURRENT_DOWNLOADS: usize = 32;
     // Shared reqwest client
     let client = reqwest::Client::new();
@@ -207,8 +223,12 @@ async fn download_patches_concurrent_inner(
         let patch_file_url = patch_url
             .join(patch_info.file_name.as_str())
             .context("Failed to generate URL for patch file")?;
-
-        let mut tmp_file = tempfile::tempfile().context("Failed to create temporary file")?;
+        let local_file_path = download_directory
+            .as_ref()
+            .join(patch_info.file_name.as_str());
+        let mut tmp_file = File::create(&local_file_path)
+            .await
+            .context("Failed to create temporary file")?;
         // Setup a progress callback that'll send the current download speed to the UI
         let shared_state = shared_progress_state.clone();
         let patch_number_callback = patch_number.clone();
@@ -257,12 +277,10 @@ async fn download_patches_concurrent_inner(
 
         // Check the archive's integrity if required
         if ensure_integrity
-            && !is_archive_valid(&mut tmp_file).map_err(|_| {
-                anyhow!(
-                    "Failed to check archive's integrity: '{}'",
-                    patch_info.file_name
-                )
-            })?
+            && !is_archive_valid(&local_file_path).context(format!(
+                "Failed to check archive's integrity: '{}'",
+                patch_info.file_name
+            ))?
         {
             return Err(anyhow!("Archive '{}' is corrupt", patch_info.file_name));
         }
@@ -273,13 +291,10 @@ async fn download_patches_concurrent_inner(
             let mut patch_number = patch_number.lock().await;
             *patch_number += 1;
         }
-        // File's been downloaded, seek to start and add it to the queue
-        tmp_file
-            .seek(SeekFrom::Start(0))
-            .context("Failed to seek downloaded file")?;
+        // File's been downloaded, add it to the queue
         Ok(PendingPatch {
             info: patch_info,
-            local_file: tmp_file,
+            local_file_path,
         }) as Result<PendingPatch>
     }))
     .buffer_unordered(CONCURRENT_DOWNLOADS)
@@ -287,12 +302,8 @@ async fn download_patches_concurrent_inner(
     .await
 }
 
-fn is_archive_valid(tmp_file: &mut File) -> InterruptibleFnResult<bool> {
-    tmp_file
-        .seek(SeekFrom::Start(0))
-        .map_err(|e| InterruptibleFnError::Err(format!("Failed to seek file: {}", e)))?;
-    let mut archive = ThorArchive::new(tmp_file)
-        .map_err(|e| InterruptibleFnError::Err(format!("Failed to open archive: {}", e)))?;
+fn is_archive_valid<P: AsRef<Path>>(archive_path: P) -> Result<bool> {
+    let mut archive = ThorArchive::open(archive_path.as_ref()).context("Failed to open archive")?;
     match archive.is_valid() {
         Err(e) => {
             if let GrufError::EntryNotFound = e {
@@ -300,10 +311,10 @@ fn is_archive_valid(tmp_file: &mut File) -> InterruptibleFnResult<bool> {
                 Ok(true)
             } else {
                 // Only consider this an error if the integrity file was found
-                return Err(InterruptibleFnError::Err(format!(
+                Err(anyhow!(
                     "Archive's integrity file is invalid: {}",
                     e.to_string(),
-                )));
+                ))
             }
         }
         Ok(v) => Ok(v),
@@ -344,11 +355,12 @@ async fn download_patch_to_file<CB: FnMut(u64, u64)>(
     {
         tmp_file
             .write_all(&chunk[..])
+            .await
             .map_err(|e| anyhow!("Failed to download file '{}': {}.", patch.file_name, e))?;
         downloaded_bytes += chunk.len() as u64;
         progress_callback(downloaded_bytes, bytes_to_download);
     }
-    tmp_file.sync_all().map_err(|e| {
+    tmp_file.sync_all().await.map_err(|e| {
         anyhow!(
             "Failed to sync downloaded file '{}': {}.",
             patch.file_name,
@@ -386,7 +398,7 @@ async fn apply_patches<P: AsRef<Path>>(
         }
         let patch_name = pending_patch.info.file_name;
         log::info!("Processing {}", patch_name);
-        let mut thor_archive = ThorArchive::new(pending_patch.local_file).map_err(|e| {
+        let mut thor_archive = ThorArchive::open(&pending_patch.local_file_path).map_err(|e| {
             InterruptibleFnError::Err(format!("Cannot read '{}': {}.", patch_name, e))
         })?;
 
@@ -446,7 +458,8 @@ async fn apply_patches<P: AsRef<Path>>(
 mod tests {
     use super::*;
     use httptest::{matchers::*, responders::*, Expectation, Server};
-    use std::io::Read;
+    use std::io::SeekFrom;
+    use tokio::io::AsyncReadExt;
 
     #[tokio::test]
     async fn test_download_path_to_file() {
@@ -471,7 +484,7 @@ mod tests {
             index: 0,
             file_name: patch_name.to_string(),
         };
-        let mut tmp_file = tempfile::tempfile().unwrap();
+        let mut tmp_file = File::from_std(tempfile::tempfile().unwrap());
         download_patch_to_file(
             &reqwest::Client::new(),
             &from_url,
@@ -482,11 +495,11 @@ mod tests {
         .await
         .unwrap();
 
-        tmp_file.seek(SeekFrom::Start(0)).unwrap();
+        tmp_file.seek(SeekFrom::Start(0)).await.unwrap();
         let mut file_content = Vec::with_capacity(data_size);
-        tmp_file.read_to_end(&mut file_content).unwrap();
+        tmp_file.read_to_end(&mut file_content).await.unwrap();
         // Size check
-        assert_eq!(data_size as u64, tmp_file.metadata().unwrap().len());
+        assert_eq!(data_size as u64, tmp_file.metadata().await.unwrap().len());
         assert_eq!(data_size, file_content.len());
         // Content check
         assert_eq!(body_content, file_content);
