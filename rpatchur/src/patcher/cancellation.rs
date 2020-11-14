@@ -1,6 +1,8 @@
 use super::PatcherCommand;
 use tokio::sync::mpsc;
 
+pub type InterruptibleFnResult<T> = std::result::Result<T, InterruptibleFnError>;
+
 pub enum InterruptibleFnError {
     Err(String), // An actual error
     Interrupted, // An interruption
