@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::convert::TryFrom;
-use std::io;
 
+use crate::error::{GrufError, Result};
 use crate::grf::reader::{GrfArchive, GrfFileEntry, GRF_HEADER_SIZE};
 
 #[derive(Debug)]
@@ -9,13 +9,14 @@ pub struct AvailableChunk {
     pub size: usize,
 }
 
+#[derive(Debug)]
 pub struct AvailableChunkList {
     end_offset: u64,
     sizes: BTreeSet<(usize, u64)>, // Indexed and ordered by size
     chunks: BTreeMap<u64, AvailableChunk>, // Indexed and ordered by offset
 }
 
-pub fn list_available_chunks(archive: &mut GrfArchive) -> io::Result<AvailableChunkList> {
+pub fn list_available_chunks(archive: &mut GrfArchive) -> Result<AvailableChunkList> {
     if archive.file_count() == 0 {
         return Ok(AvailableChunkList::new());
     }
@@ -28,8 +29,12 @@ pub fn list_available_chunks(archive: &mut GrfArchive) -> io::Result<AvailableCh
         let left_entry = entries[i];
         let right_entry = entries[i + 1];
         let expected_entry_offset = left_entry.offset + left_entry.size_compressed_aligned as u64;
-        let space_between_entries = usize::try_from(right_entry.offset - expected_entry_offset)
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "File too big or malformed"))?;
+        let space_between_entries = right_entry
+            .offset
+            .checked_sub(expected_entry_offset)
+            .ok_or(GrufError::parsing_error("Archive is malformed"))?;
+        let space_between_entries = usize::try_from(space_between_entries)
+            .map_err(|_| GrufError::parsing_error("Archive is too big"))?;
         chunks_sizes.insert((space_between_entries, expected_entry_offset));
         available_chunks.insert(
             expected_entry_offset,
