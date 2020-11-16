@@ -190,7 +190,7 @@ where
         },
     }?;
     // Sort patches by index before returning
-    vec.sort_by(|l, r| l.info.index.cmp(&r.info.index));
+    vec.sort_unstable_by(|l, r| l.info.index.cmp(&r.info.index));
     Ok(vec)
 }
 
@@ -287,7 +287,7 @@ where
 
         // Update status
         {
-            // Take the lock, update and return the current value
+            // Take the lock and update the current value
             let mut patch_number = patch_number.lock().await;
             *patch_number += 1;
         }
@@ -307,7 +307,7 @@ fn is_archive_valid<P: AsRef<Path>>(archive_path: P) -> Result<bool> {
     match archive.is_valid() {
         Err(e) => {
             if let GrufError::EntryNotFound = e {
-                // No integrity file present, consider the file valid
+                // No integrity file present, consider the archive valid
                 Ok(true)
             } else {
                 // Only consider this an error if the integrity file was found
@@ -329,20 +329,18 @@ async fn download_patch_to_file<CB: FnMut(u64, u64)>(
     tmp_file: &mut File,
     mut progress_callback: CB,
 ) -> Result<()> {
-    let patch_file_url = patch_url.join(patch.file_name.as_str()).map_err(|_| {
-        anyhow!(
-            "Invalid file name '{}' given in patch list file.",
-            patch.file_name
-        )
-    })?;
+    let patch_file_url = patch_url.join(patch.file_name.as_str()).context(format!(
+        "Invalid file name '{}' given in patch list file",
+        patch.file_name
+    ))?;
     let mut resp = client
         .get(patch_file_url)
         .send()
         .await
-        .map_err(|e| anyhow!("Failed to download file '{}': {}.", patch.file_name, e))?;
+        .context(format!("Failed to download file '{}'", patch.file_name))?;
     if !resp.status().is_success() {
         return Err(anyhow!(
-            "Patch file '{}' not found on the remote server.",
+            "Patch file '{}' not found on the remote server",
             patch.file_name
         ));
     }
@@ -351,22 +349,19 @@ async fn download_patch_to_file<CB: FnMut(u64, u64)>(
     while let Some(chunk) = resp
         .chunk()
         .await
-        .map_err(|e| anyhow!("Failed to download file '{}': {}.", patch.file_name, e))?
+        .context(format!("Failed to download file '{}'", patch.file_name))?
     {
         tmp_file
             .write_all(&chunk[..])
             .await
-            .map_err(|e| anyhow!("Failed to download file '{}': {}.", patch.file_name, e))?;
+            .context(format!("Failed to download file '{}'", patch.file_name))?;
         downloaded_bytes += chunk.len() as u64;
         progress_callback(downloaded_bytes, bytes_to_download);
     }
-    tmp_file.sync_all().await.map_err(|e| {
-        anyhow!(
-            "Failed to sync downloaded file '{}': {}.",
-            patch.file_name,
-            e
-        )
-    })?;
+    tmp_file.sync_all().await.context(format!(
+        "Failed to sync downloaded file '{}'",
+        patch.file_name,
+    ))?;
     Ok(())
 }
 

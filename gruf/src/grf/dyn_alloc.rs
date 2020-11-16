@@ -22,7 +22,7 @@ pub fn list_available_chunks(archive: &mut GrfArchive) -> Result<AvailableChunkL
     }
 
     let mut entries: Vec<&GrfFileEntry> = archive.get_entries().collect();
-    entries.sort_by(|a, b| a.offset.cmp(&b.offset));
+    entries.sort_unstable_by(|a, b| a.offset.cmp(&b.offset));
     let mut chunks_sizes = BTreeSet::new();
     let mut available_chunks = BTreeMap::new();
     for i in 0..entries.len() - 1 {
@@ -45,9 +45,9 @@ pub fn list_available_chunks(archive: &mut GrfArchive) -> Result<AvailableChunkL
     let last_entry = entries
         .last()
         .ok_or(GrufError::parsing_error("Cannot get last entry"))?;
-    let last_entry_offset = last_entry.offset + last_entry.size_compressed_aligned as u64;
+    let end_offset = last_entry.offset + last_entry.size_compressed_aligned as u64;
     Ok(AvailableChunkList {
-        end_offset: last_entry_offset,
+        end_offset,
         sizes: chunks_sizes,
         chunks: available_chunks,
     })
@@ -99,6 +99,11 @@ impl AvailableChunkList {
     pub fn realloc_chunk(&mut self, offset: u64, size: usize, new_size: usize) -> Result<u64> {
         let end_offset = offset + size as u64;
         let new_end_offset = offset + new_size as u64;
+        if end_offset == self.end_offset {
+            self.end_offset = new_end_offset;
+            return Ok(offset);
+        }
+
         if let Some(next_chunk) = self.chunks.get(&end_offset) {
             // Next chunk is available
             let next_chunk_size = next_chunk.size;
@@ -110,10 +115,6 @@ impl AvailableChunkList {
                 self.insert_chunk_internal(new_end_offset, size + next_chunk_size - new_size);
                 return Ok(offset);
             }
-        }
-        if end_offset == self.end_offset {
-            self.end_offset = new_end_offset;
-            return Ok(offset);
         }
 
         // Next chunk is used or free but too small, must move
@@ -221,6 +222,27 @@ mod tests {
         assert_eq!(START_OFFSET + 2 * chunk_size as u64, res);
         let res = chunk_list.alloc_chunk(chunk_size).unwrap();
         assert_eq!(START_OFFSET, res);
+    }
+
+    #[test]
+    fn test_chunk_list_realloc_overlap() {
+        let chunk_size: usize = 64;
+        let mut chunk_list = AvailableChunkList::new();
+        let offset1 = chunk_list.alloc_chunk(0).unwrap();
+        let offset2 = chunk_list.alloc_chunk(0).unwrap();
+        let offset3 = chunk_list.alloc_chunk(chunk_size).unwrap();
+        assert_eq!(offset1, offset2);
+        assert_eq!(offset1, offset3);
+
+        chunk_list.free_chunk(offset1, 0).unwrap();
+        let res = chunk_list.realloc_chunk(offset2, 0, chunk_size).unwrap();
+        assert_ne!(res, offset2);
+
+        let res = chunk_list.realloc_chunk(offset3, chunk_size, 0).unwrap();
+        assert_eq!(res, offset3);
+
+        let res = chunk_list.alloc_chunk(chunk_size).unwrap();
+        assert_eq!(res, offset3);
     }
 
     #[test]

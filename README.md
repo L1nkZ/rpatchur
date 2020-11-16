@@ -28,6 +28,8 @@ Known Limitations
 * Can only build GRF files in version 0x200
 * Cannot auto-update
 * No support for RGZ/GPF patch formats
+* Cannot patch GRF files containing multiple entries pointing to the same
+offset
 
 Documentation
 -------------
