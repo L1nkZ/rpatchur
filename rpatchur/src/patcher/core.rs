@@ -78,7 +78,7 @@ async fn interruptible_patcher_routine(
     mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
 ) -> Result<()> {
     log::info!("Patching started");
-    let patch_list_url = Url::parse(config.web.plist_url.as_str()).unwrap();
+    let patch_list_url = Url::parse(config.web.plist_url.as_str())?;
     let mut patch_list = fetch_patch_list(patch_list_url)
         .await
         .context("Failed to retrieve the patch list")?;

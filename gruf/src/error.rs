@@ -1,5 +1,7 @@
 use std::io;
+use std::num;
 
+use bincode;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, GrufError>;
@@ -8,6 +10,10 @@ pub type Result<T> = std::result::Result<T, GrufError>;
 pub enum GrufError {
     #[error("io error: {0}")]
     IoError(#[from] io::Error),
+    #[error("bincode error: {0}")]
+    BincodeError(#[from] bincode::Error),
+    #[error("int conversion error: {0}")]
+    TryFromIntError(#[from] num::TryFromIntError),
     #[error("failed to parse archive: {0}")]
     ParsingError(String),
     #[error("failed to find file entry")]
@@ -16,6 +22,8 @@ pub enum GrufError {
     InvalidContent(String),
     #[error("failed to serialize data: {0}")]
     SerializationError(String),
+    #[error("dyn_alloc error")]
+    DynAllocError,
 }
 
 impl GrufError {
