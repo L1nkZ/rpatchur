@@ -3,8 +3,9 @@
 mod patcher;
 mod ui;
 
-use std::io;
+use log::LevelFilter;
 
+use anyhow::Result;
 use patcher::{patcher_thread_routine, retrieve_patcher_configuration, PatcherCommand};
 use simple_logger::SimpleLogger;
 use tokio::{runtime, sync::mpsc};
@@ -14,6 +15,8 @@ const WINDOW_TITLE: &str = "RPatchur";
 
 fn main() {
     SimpleLogger::new()
+        .with_level(LevelFilter::Off)
+        .with_module_level("rpatchur", LevelFilter::Info)
         .init()
         .expect("Failed to initalize the logger");
     let mut tokio_rt = build_tokio_runtime().expect("Failed to build a tokio runtime");
@@ -45,9 +48,9 @@ fn main() {
 }
 
 /// Builds a tokio runtime with a threaded scheduler and a reactor
-fn build_tokio_runtime() -> io::Result<runtime::Runtime> {
-    runtime::Builder::new()
+fn build_tokio_runtime() -> Result<runtime::Runtime> {
+    Ok(runtime::Builder::new()
         .threaded_scheduler()
         .enable_all()
-        .build()
+        .build()?)
 }
