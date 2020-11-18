@@ -45,7 +45,7 @@ script:
   - cargo test --target "$TARGET" --verbose
 
 before_deploy:
-  - cargo build --target "$TARGET" --release --verbose
+  - bash ci/before_deploy.sh
 
 deploy:
   provider: releases
@@ -55,7 +55,7 @@ deploy:
   # - encrypt it using: `travis encrypt API_KEY_HERE`
   # - paste the output below
   api_key:
-    secure: "EUUjpqI9FwbyWHjj0cqWQt2toz91TxYgMif9Vsx1+0sAyVq0DUrn30Mw4NwW8rB/YUDKh+6u0rPfvKjz195FWLJtx6B90YzfXhbA7xT628a7ZcP6gH+2epr/Uh7yy3QOt9vhjuBKkdyJYr1SB8cpOGqb5VFbNyvhf2OockdLtsYswhjr3fHvKPiOhO+5bGftpNvxjThyG5Bvkx1dcFDQuHfoj1Vggj3/dbuv2bg7WbXWPst6F3mL1ersAqvvPIhFXYrRkFI+hA8ReUagaEt0FSLKCCN1sGPLwu+NzecIBTSo3TF0dIbrVhmvCWIaL3MtJrQ9bynDmCVtB8d1eopkjIPYi0jFngu/HIlUKaJBACjOE3XsfP0TzFEyQRfN5UUUAQqmXXPf0Y+kzblxbuEuyBMpSrFWcPrh4AYWq8pWAbIhJYo+dE/4JTcVst96gn5ArZ9fN0sqh4B7g8WZXBzaaa3idvgIn6Tvj9qHOZQZ7njoW3ZjfbjRHjIIYFvnlVHsgNEBwozbSjERQ1sylRGhGEkR2v5OIP2zzsO3jy6ebJFS38K6FY+RWsmy9ls7b6s+inliUh2yy+w3jRSTg95lNrvKLVMdFrnP2ngklG6vJM6xsv4XPpgTCQjpetLsvTDdFvTGigYvMMVK2ehh4XHUUiUBG9TMMdFK/rxOw/FYL8g="
+    secure: "bQc8cZSMpmLfO5yBauHNITo+ifnzDwEhmZ8atLD15wb6JyYmgM7Nzw5/wu5ng1VhHafKAAtBA4Z9SKgG4+Uvb24z9PCH1KgGuJ77wH555aHW4LGAz5o333CGW4Y934KjiAmwUlZsECrwYqRkGyW+XGrD6jpw6TyH/1UFqhPk3QT8ZWiH9xFPsgv08NZt4pwlh5bQVcN8y+FOwvl947n/KdWyQUrxI6r88l4vhfUr8w1j66UKiS2pw8oiDKxsuF2He4vOIranjdktQzLXJ667taFYZi6eqw3u5ijoXsipLZFWjnP7oKNO4tctBZj5i5+i/vnf8nqGowoVeMOYCoLldt+kJ6o43/ltqOQlLVLr6FKAhWAQeDfu611/xECiKyhq8LDHdY+HOODwz9WER8iZMjMPMA+LAjZWbgPA3HJtTfi4wkRouWX8rcr3PGIXOSfNuWWMNRwTnUTbnuQxB2yU/UkA6m2FV7Hz21KII0RX9z5j9QG/y6zk1YVO8jnXlqFS3ONtocvcpeYZlGlVEAfTFw9cv04yFYZIfTeYGZFG/XvfLdO8g6mP92WrkKkOj78DEpc0fdECzLavLdBHQ/u9ELID03jAJC0HoZY/P/6hwdYXOrLwRgEb1iO+i5pkgRbpSF15xRwSEC5normqJMYz6qZglemeKCgxGv04XA2j3JY="
   # for uploading multiple files
   file_glob: true
   # NOTE explanation on each env variable
