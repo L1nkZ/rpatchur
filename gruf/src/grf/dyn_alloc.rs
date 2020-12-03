@@ -32,7 +32,7 @@ pub fn list_available_chunks(archive: &mut GrfArchive) -> Result<AvailableChunkL
         let space_between_entries = right_entry
             .offset
             .checked_sub(expected_entry_offset)
-            .ok_or(GrufError::parsing_error("Archive is malformed"))?;
+            .ok_or_else(|| GrufError::parsing_error("Archive is malformed"))?;
         let space_between_entries = usize::try_from(space_between_entries)?;
         chunks_sizes.insert((space_between_entries, expected_entry_offset));
         available_chunks.insert(
@@ -44,7 +44,7 @@ pub fn list_available_chunks(archive: &mut GrfArchive) -> Result<AvailableChunkL
     }
     let last_entry = entries
         .last()
-        .ok_or(GrufError::parsing_error("Cannot get last entry"))?;
+        .ok_or_else(|| GrufError::parsing_error("Cannot get last entry"))?;
     let end_offset = last_entry.offset + last_entry.size_compressed_aligned as u64;
     Ok(AvailableChunkList {
         end_offset,

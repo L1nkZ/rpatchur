@@ -1,7 +1,6 @@
 use std::io;
 use std::num;
 
-use bincode;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, GrufError>;
