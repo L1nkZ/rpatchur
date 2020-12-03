@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["LinkZ <wanthost@gmail.com>"]
 edition = "2018"
 build = "build.rs"
+description = "A customizable patcher for Ragnarok Online"
 
 [package.metadata.winres]
 FileDescription = "A customizable patcher for Ragnarok Online"
@@ -29,6 +30,7 @@ log = { version = "0.4", features = ["release_max_level_off"] }
 simple_logger = "1.10"
 bincode = "1.2"
 anyhow = "1.0"
+clap = "2.33"
 
 [target.'cfg(windows)'.dependencies]
 winapi = "0.3"

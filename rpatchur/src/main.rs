@@ -4,23 +4,50 @@ mod patcher;
 mod ui;
 
 use log::LevelFilter;
+use std::env;
+use std::path::PathBuf;
 
 use anyhow::Result;
+use clap::{App, Arg};
 use patcher::{patcher_thread_routine, retrieve_patcher_configuration, PatcherCommand};
 use simple_logger::SimpleLogger;
 use tokio::{runtime, sync::mpsc};
 use ui::{UIController, WebViewUserData};
 
+const PKG_NAME: &str = env!("CARGO_PKG_NAME");
+const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
+const PKG_AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
+const PKG_DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 const WINDOW_TITLE: &str = "RPatchur";
 
 fn main() {
     SimpleLogger::new()
         .with_level(LevelFilter::Off)
-        .with_module_level("rpatchur", LevelFilter::Info)
+        .with_module_level(PKG_NAME, LevelFilter::Info)
         .init()
         .expect("Failed to initalize the logger");
+
+    // Parse CLI arguments
+    let matches = App::new(PKG_NAME)
+        .version(PKG_VERSION)
+        .author(PKG_AUTHORS)
+        .about(PKG_DESCRIPTION)
+        .arg(
+            Arg::with_name("working-directory")
+                .short("w")
+                .long("working-directory")
+                .value_name("GAME_DIRECTORY")
+                .help("Sets a custom working directory")
+                .takes_value(true),
+        )
+        .get_matches();
+    if let Some(working_directory) = matches.value_of("working-directory") {
+        env::set_current_dir(PathBuf::from(working_directory))
+            .expect("Specified working directory is invalid or inaccessible");
+    };
+
     let mut tokio_rt = build_tokio_runtime().expect("Failed to build a tokio runtime");
-    let config = match retrieve_patcher_configuration() {
+    let config = match retrieve_patcher_configuration(None) {
         Err(e) => {
             let err_msg = "Failed to retrieve the patcher's configuration";
             log::error!("{}", err_msg);

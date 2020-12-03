@@ -56,11 +56,15 @@ pub struct PatchingConfiguration {
     pub create_grf: bool,      // Create new GRFs if they don't exist
 }
 
-pub fn retrieve_patcher_configuration() -> Result<PatcherConfiguration> {
+pub fn retrieve_patcher_configuration(
+    config_file_path: Option<PathBuf>,
+) -> Result<PatcherConfiguration> {
     let patcher_name = get_patcher_name()?;
-    let configuration_file_name = PathBuf::from(patcher_name).with_extension("yml");
+    // Use given configuration path if present
+    let config_file_path =
+        config_file_path.unwrap_or_else(|| PathBuf::from(patcher_name).with_extension("yml"));
     // Read the YAML content of the file as an instance of `PatcherConfiguration`.
-    parse_configuration(configuration_file_name)
+    parse_configuration(config_file_path)
 }
 
 fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> Result<PatcherConfiguration> {
