@@ -6,13 +6,15 @@ window:
 
 # Configure the Play button’s behavior
 play:
-  path: ragexe.exe    # Relative path to the game executable
-  argument: "-1sak1"  # Command-line arguments to pass to the executable
+  path: ragexe.exe        # Relative path to the game executable
+  argument: "-1sak1"      # Command-line arguments to pass to the executable
+  exit_on_success: false  # (Optional) Exit the patcher when the game client starts. Defaults to `true`
 
 # Configure the Setup button’s behavior
 setup:
-  path: Setup.exe  # Relative path to the setup executable
-  argument: ""     # Command-line arguments to pass to the executable
+  path: Setup.exe         # Relative path to the setup executable
+  argument: ""            # Command-line arguments to pass to the executable
+  exit_on_success: false  # (Optional) Exit the patcher when the setup software starts. Defaults to `false`
 
 web:
   index_url: https://myserver.com/index.html  # URL of the web page to use as the UI
