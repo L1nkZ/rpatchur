@@ -139,17 +139,35 @@ pub fn build_webview<'a>(
 fn handle_play(webview: &mut WebView<WebViewUserData>) {
     let client_exe: &String = &webview.user_data().patcher_config.play.path;
     let client_argument: &String = &webview.user_data().patcher_config.play.argument;
+    let exit_on_success = webview
+        .user_data()
+        .patcher_config
+        .play
+        .exit_on_success
+        .unwrap_or(true);
     if cfg!(target_os = "windows") {
         #[cfg(windows)]
         match windows::spawn_elevated_win32_process(client_exe, client_argument) {
-            Ok(_) => log::trace!("Client started."),
+            Ok(success) => {
+                if success {
+                    log::trace!("Client started");
+                    if exit_on_success {
+                        webview.exit();
+                    }
+                }
+            }
             Err(e) => {
                 log::warn!("Failed to start client: {}", e);
             }
         }
     } else {
         match Command::new(client_exe).arg(client_argument).spawn() {
-            Ok(child) => log::trace!("Client started: pid={}", child.id()),
+            Ok(child) => {
+                log::trace!("Client started: pid={}", child.id());
+                if exit_on_success {
+                    webview.exit();
+                }
+            }
             Err(e) => {
                 log::warn!("Failed to start client: {}", e);
             }
@@ -163,17 +181,35 @@ fn handle_play(webview: &mut WebView<WebViewUserData>) {
 fn handle_setup(webview: &mut WebView<WebViewUserData>) {
     let setup_exe: &String = &webview.user_data().patcher_config.setup.path;
     let setup_argument: &String = &webview.user_data().patcher_config.setup.argument;
+    let exit_on_success = webview
+        .user_data()
+        .patcher_config
+        .setup
+        .exit_on_success
+        .unwrap_or(false);
     if cfg!(target_os = "windows") {
         #[cfg(windows)]
         match windows::spawn_elevated_win32_process(setup_exe, setup_argument) {
-            Ok(_) => log::trace!("Setup software started."),
+            Ok(success) => {
+                if success {
+                    log::trace!("Setup software started");
+                    if exit_on_success {
+                        webview.exit();
+                    }
+                }
+            }
             Err(e) => {
                 log::warn!("Failed to start setup software: {}", e);
             }
         }
     } else {
         match Command::new(setup_exe).arg(setup_argument).spawn() {
-            Ok(child) => log::trace!("Setup software started: pid={}", child.id()),
+            Ok(child) => {
+                log::trace!("Setup software started: pid={}", child.id());
+                if exit_on_success {
+                    webview.exit();
+                }
+            }
             Err(e) => {
                 log::warn!("Failed to start setup software: {}", e);
             }
@@ -228,18 +264,15 @@ fn handle_reset_cache(_webview: &mut WebView<WebViewUserData>) {
 // Note: Taken from the rustup project
 #[cfg(windows)]
 mod windows {
+    use anyhow::{anyhow, Result};
     use std::ffi::OsStr;
-    use std::io;
     use std::os::windows::ffi::OsStrExt;
 
-    fn to_u16s<S: AsRef<OsStr>>(s: S) -> io::Result<Vec<u16>> {
-        fn inner(s: &OsStr) -> io::Result<Vec<u16>> {
+    fn to_u16s<S: AsRef<OsStr>>(s: S) -> Result<Vec<u16>> {
+        fn inner(s: &OsStr) -> Result<Vec<u16>> {
             let mut maybe_result: Vec<u16> = s.encode_wide().collect();
             if maybe_result.iter().any(|&u| u == 0) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    "strings passed to WinAPI cannot contain NULs",
-                ));
+                return Err(anyhow!("strings passed to WinAPI cannot contain NULs"));
             }
             maybe_result.push(0);
             Ok(maybe_result)
@@ -249,10 +282,7 @@ mod windows {
 
     /// This function is required to start processes that require elevation, from
     /// a non-elevated process.
-    pub fn spawn_elevated_win32_process<S: AsRef<OsStr>>(
-        path: S,
-        parameter: S,
-    ) -> io::Result<bool> {
+    pub fn spawn_elevated_win32_process<S: AsRef<OsStr>>(path: S, parameter: S) -> Result<bool> {
         use std::ptr;
         use winapi::ctypes::c_int;
         use winapi::shared::minwindef::HINSTANCE;
