@@ -14,7 +14,6 @@ RUN apt update && apt install -y \
         curl
 
 # Install rust and Windows CPU Arch
-COPY rustup.sh rustup.sh
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
 RUN /root/.cargo/bin/rustup target add x86_64-pc-windows-gnu
 
