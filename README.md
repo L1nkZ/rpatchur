@@ -57,6 +57,16 @@ $ cargo build --release
 
 Note: Rust 1.42 or later is required.
 
+### Cross Compilation
+
+It is recommended to build the project on the platform that you target. However,
+for those of you who'd like to compile from Linux and distribute to Windows,
+there's a `Dockerfile` [here](docker). This `Dockerfile` builds a Docker image
+that can be used to easily cross-compile the project from Linux to Windows.
+
+Note: The executable's icon and description will be missing for cross compiled
+builds.
+
 Additional Notes
 ----------------
 
