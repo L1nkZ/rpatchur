@@ -5,6 +5,8 @@ use std::process::Command;
 
 use crate::patcher::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use futures::executor::block_on;
+use serde::Deserialize;
+use serde_json::Value;
 use tokio::sync::mpsc;
 use web_view::{Content, Handle, WebView};
 
@@ -126,7 +128,7 @@ pub fn build_webview<'a>(
                 "start_update" => handle_start_update(webview),
                 "cancel_update" => handle_cancel_update(webview),
                 "reset_cache" => handle_reset_cache(webview),
-                _ => (),
+                request => handle_json_request(webview, request),
             }
             Ok(())
         })
@@ -137,8 +139,12 @@ pub fn build_webview<'a>(
 ///
 /// This function can create elevated processes on Windows with UAC activated.
 fn handle_play(webview: &mut WebView<WebViewUserData>) {
+    let client_argument: String = webview.user_data().patcher_config.play.argument.clone();
+    start_game_client(webview, client_argument);
+}
+
+fn start_game_client(webview: &mut WebView<WebViewUserData>, client_argument: String) {
     let client_exe: &String = &webview.user_data().patcher_config.play.path;
-    let client_argument: &String = &webview.user_data().patcher_config.play.argument;
     let exit_on_success = webview
         .user_data()
         .patcher_config
@@ -147,7 +153,7 @@ fn handle_play(webview: &mut WebView<WebViewUserData>) {
         .unwrap_or(true);
     if cfg!(target_os = "windows") {
         #[cfg(windows)]
-        match windows::spawn_elevated_win32_process(client_exe, client_argument) {
+        match windows::spawn_elevated_win32_process(client_exe, &client_argument) {
             Ok(success) => {
                 if success {
                     log::trace!("Client started");
@@ -257,6 +263,54 @@ fn handle_reset_cache(_webview: &mut WebView<WebViewUserData>) {
         let cache_file_path = PathBuf::from(patcher_name).with_extension("dat");
         if let Err(e) = fs::remove_file(cache_file_path) {
             log::warn!("Failed to remove the cache file: {}", e);
+        }
+    }
+}
+
+/// Parses JSON requests (for invoking functions with parameters) and dispatches
+/// them to the invoked function.
+fn handle_json_request(webview: &mut WebView<WebViewUserData>, request: &str) {
+    let result: serde_json::Result<Value> = serde_json::from_str(request);
+    match result {
+        Err(e) => {
+            log::error!("Invalid JSON request: {}", e);
+        }
+        Ok(json_req) => {
+            let function_name = json_req["function"].as_str();
+            if let Some(function_name) = function_name {
+                let function_params = json_req["parameters"].clone();
+                match function_name {
+                    "login" => handle_login(webview, function_params),
+                    _ => {
+                        log::error!("Unknown function '{}'", function_name);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Parameters expected for the login function
+#[derive(Deserialize)]
+struct LoginParameters {
+    login: String,
+    password: String,
+}
+
+/// Launches the game client with the given credentials
+fn handle_login(webview: &mut WebView<WebViewUserData>, parameters: Value) {
+    let result: serde_json::Result<LoginParameters> = serde_json::from_value(parameters);
+    match result {
+        Err(e) => {
+            log::error!("Invalid arguments given for 'login': {}", e)
+        }
+        Ok(login_params) => {
+            let play_argument: &String = &webview.user_data().patcher_config.play.argument;
+            let client_args = format!(
+                "\"-t:{}\" \"{}\" {}",
+                login_params.password, login_params.login, play_argument
+            );
+            start_game_client(webview, client_args);
         }
     }
 }
