@@ -1,10 +1,17 @@
 language: rust
+
+services:
+  - docker
+
 matrix:
   include:
     # Stable channel.
     - os: linux
       rust: stable
       env: TARGET=x86_64-unknown-linux-gnu
+    - os: linux
+      rust: stable
+      env: TARGET=x86_64-unknown-linux-musl
     - os: osx
       osx_image: xcode11.4 # Catalina
       rust: stable
@@ -19,6 +26,9 @@ matrix:
     - os: linux
       rust: 1.42.0
       env: TARGET=x86_64-unknown-linux-gnu
+    - os: linux
+      rust: 1.42.0
+      env: TARGET=x86_64-unknown-linux-musl
     - os: osx
       rust: 1.42.0
       env: TARGET=x86_64-apple-darwin
@@ -41,8 +51,7 @@ install:
   - if [[ $TRAVIS_OS_NAME = linux && $HOST != $TARGET ]]; then rustup target add $TARGET; fi
 
 script:
-  - cargo build --target "$TARGET" --verbose
-  - cargo test --target "$TARGET" --verbose
+  - bash ci/script.sh
 
 before_deploy:
   - bash ci/before_deploy.sh
