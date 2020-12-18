@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod patcher;
+mod process;
 mod ui;
 
 use log::LevelFilter;

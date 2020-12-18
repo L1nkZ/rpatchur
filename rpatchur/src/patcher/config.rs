@@ -26,14 +26,14 @@ pub struct WindowConfiguration {
 #[derive(Deserialize, Clone)]
 pub struct PlayConfiguration {
     pub path: String,
-    pub argument: String,
+    pub arguments: Vec<String>,
     pub exit_on_success: Option<bool>,
 }
 
 #[derive(Deserialize, Clone)]
 pub struct SetupConfiguration {
     pub path: String,
-    pub argument: String,
+    pub arguments: Vec<String>,
     pub exit_on_success: Option<bool>,
 }
 

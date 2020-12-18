@@ -1,9 +1,9 @@
 use std::fs;
 use std::include_str;
 use std::path::PathBuf;
-use std::process::Command;
 
 use crate::patcher::{get_patcher_name, PatcherCommand, PatcherConfiguration};
+use crate::process::start_executable;
 use futures::executor::block_on;
 use serde::Deserialize;
 use serde_json::Value;
@@ -139,46 +139,8 @@ pub fn build_webview<'a>(
 ///
 /// This function can create elevated processes on Windows with UAC activated.
 fn handle_play(webview: &mut WebView<WebViewUserData>) {
-    let client_argument: String = webview.user_data().patcher_config.play.argument.clone();
-    start_game_client(webview, client_argument);
-}
-
-fn start_game_client(webview: &mut WebView<WebViewUserData>, client_argument: String) {
-    let client_exe: &String = &webview.user_data().patcher_config.play.path;
-    let exit_on_success = webview
-        .user_data()
-        .patcher_config
-        .play
-        .exit_on_success
-        .unwrap_or(true);
-    if cfg!(target_os = "windows") {
-        #[cfg(windows)]
-        match windows::spawn_elevated_win32_process(client_exe, &client_argument) {
-            Ok(success) => {
-                if success {
-                    log::trace!("Client started");
-                    if exit_on_success {
-                        webview.exit();
-                    }
-                }
-            }
-            Err(e) => {
-                log::warn!("Failed to start client: {}", e);
-            }
-        }
-    } else {
-        match Command::new(client_exe).arg(client_argument).spawn() {
-            Ok(child) => {
-                log::trace!("Client started: pid={}", child.id());
-                if exit_on_success {
-                    webview.exit();
-                }
-            }
-            Err(e) => {
-                log::warn!("Failed to start client: {}", e);
-            }
-        }
-    }
+    let client_arguments = webview.user_data().patcher_config.play.arguments.clone();
+    start_game_client(webview, &client_arguments);
 }
 
 /// Opens the configured 'Setup' software with the configured arguments.
@@ -186,39 +148,24 @@ fn start_game_client(webview: &mut WebView<WebViewUserData>, client_argument: St
 /// This function can create elevated processes on Windows with UAC activated.
 fn handle_setup(webview: &mut WebView<WebViewUserData>) {
     let setup_exe: &String = &webview.user_data().patcher_config.setup.path;
-    let setup_argument: &String = &webview.user_data().patcher_config.setup.argument;
+    let setup_arguments = &webview.user_data().patcher_config.setup.arguments;
     let exit_on_success = webview
         .user_data()
         .patcher_config
         .setup
         .exit_on_success
         .unwrap_or(false);
-    if cfg!(target_os = "windows") {
-        #[cfg(windows)]
-        match windows::spawn_elevated_win32_process(setup_exe, setup_argument) {
-            Ok(success) => {
-                if success {
-                    log::trace!("Setup software started");
-                    if exit_on_success {
-                        webview.exit();
-                    }
-                }
-            }
-            Err(e) => {
-                log::warn!("Failed to start setup software: {}", e);
-            }
-        }
-    } else {
-        match Command::new(setup_exe).arg(setup_argument).spawn() {
-            Ok(child) => {
-                log::trace!("Setup software started: pid={}", child.id());
+    match start_executable(setup_exe, setup_arguments) {
+        Ok(success) => {
+            if success {
+                log::trace!("Setup software started");
                 if exit_on_success {
                     webview.exit();
                 }
             }
-            Err(e) => {
-                log::warn!("Failed to start setup software: {}", e);
-            }
+        }
+        Err(e) => {
+            log::warn!("Failed to start setup software: {}", e);
         }
     }
 }
@@ -305,68 +252,34 @@ fn handle_login(webview: &mut WebView<WebViewUserData>, parameters: Value) {
             log::error!("Invalid arguments given for 'login': {}", e)
         }
         Ok(login_params) => {
-            let play_argument: &String = &webview.user_data().patcher_config.play.argument;
-            let client_args = format!(
-                "\"-t:{}\" \"{}\" {}",
-                login_params.password, login_params.login, play_argument
-            );
-            start_game_client(webview, client_args);
+            let mut play_arguments = webview.user_data().patcher_config.play.arguments.clone();
+            // Push credentials to the list of arguments
+            play_arguments.push(format!("-t:{}", login_params.password));
+            play_arguments.push(login_params.login);
+            start_game_client(webview, &play_arguments);
         }
     }
 }
 
-// Note: Taken from the rustup project
-#[cfg(windows)]
-mod windows {
-    use anyhow::{anyhow, Result};
-    use std::ffi::OsStr;
-    use std::os::windows::ffi::OsStrExt;
-
-    fn to_u16s<S: AsRef<OsStr>>(s: S) -> Result<Vec<u16>> {
-        fn inner(s: &OsStr) -> Result<Vec<u16>> {
-            let mut maybe_result: Vec<u16> = s.encode_wide().collect();
-            if maybe_result.iter().any(|&u| u == 0) {
-                return Err(anyhow!("strings passed to WinAPI cannot contain NULs"));
+fn start_game_client(webview: &mut WebView<WebViewUserData>, client_arguments: &Vec<String>) {
+    let client_exe: &String = &webview.user_data().patcher_config.play.path;
+    let exit_on_success = webview
+        .user_data()
+        .patcher_config
+        .play
+        .exit_on_success
+        .unwrap_or(true);
+    match start_executable(client_exe, client_arguments) {
+        Ok(success) => {
+            if success {
+                log::trace!("Client started");
+                if exit_on_success {
+                    webview.exit();
+                }
             }
-            maybe_result.push(0);
-            Ok(maybe_result)
         }
-        inner(s.as_ref())
-    }
-
-    /// This function is required to start processes that require elevation, from
-    /// a non-elevated process.
-    pub fn spawn_elevated_win32_process<S: AsRef<OsStr>>(path: S, parameter: S) -> Result<bool> {
-        use std::ptr;
-        use winapi::ctypes::c_int;
-        use winapi::shared::minwindef::HINSTANCE;
-        use winapi::shared::ntdef::LPCWSTR;
-        use winapi::shared::windef::HWND;
-        extern "system" {
-            pub fn ShellExecuteW(
-                hwnd: HWND,
-                lpOperation: LPCWSTR,
-                lpFile: LPCWSTR,
-                lpParameters: LPCWSTR,
-                lpDirectory: LPCWSTR,
-                nShowCmd: c_int,
-            ) -> HINSTANCE;
+        Err(e) => {
+            log::warn!("Failed to start client: {}", e);
         }
-        const SW_SHOW: c_int = 5;
-
-        let path = to_u16s(path)?;
-        let parameter = to_u16s(parameter)?;
-        let operation = to_u16s("runas")?;
-        let result = unsafe {
-            ShellExecuteW(
-                ptr::null_mut(),
-                operation.as_ptr(),
-                path.as_ptr(),
-                parameter.as_ptr(),
-                ptr::null(),
-                SW_SHOW,
-            )
-        };
-        Ok(result as usize > 32)
     }
 }
