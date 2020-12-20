@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.2.0] - 2020-12-20
 ### Added
 - Add two new optional `exit_on_success` configuration fields that allow users
   to make the patcher exit when starting the game client or the setup software.
