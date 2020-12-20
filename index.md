@@ -5,22 +5,44 @@ RPatchur is a customizable, cross-platform patcher for Ragnarok Online clients.
 ## Features
 
 * Customizable, web-based UI
+* Cross-platform (Windows, Linux, macOS)
 * Configurable through an external YAML file
 * HTTP/HTTPS support
 * GRF file patching (version 0x101, 0x102, 0x103 and 0x200)
 * THOR patch format support
 * Drop-in replacement for the Thor patcher
-* Cross-platform (Windows, Linux, macOS)
+* SSO login support (i.e., can act as a launcher)
 
 ## How to Build
 
 Rust version 1.42.0 or later is required to build the project.
 
-```bash
+```
 $ git clone https://github.com/L1nkZ/rpatchur.git
 $ cd rpatchur
 $ cargo build --release
 ```
+
+### Cross Compilation
+
+It is recommended to build the project on the platform that you target. However,
+a `Dockerfile` is available
+[here](https://github.com/L1nkZ/rpatchur/blob/master/docker/Dockerfile)
+for those of you who'd like to compile from Linux and distribute to Windows.
+This `Dockerfile` builds a Docker image that can be used to easily cross-compile
+the project from Linux to Windows.
+
+Note: The executable's icon and description will be missing for cross compiled
+builds.
+
+
+### Musl
+
+A `Dockerfile` is also available for those who'd like to build with musl to
+reduce the list of dependencies needed to deploy `rpatchur` on Linux. You can
+find this `Dockerfile`
+[here](https://github.com/L1nkZ/rpatchur/blob/master/docker/Dockerfile-musl).
+
 
 ## How to Use
 
@@ -31,6 +53,25 @@ name the configuration file `mypatcher.yml`.
 
 You will also need to have an HTTP server that serves your patches and a web
 page to use as the patcher's UI.
+
+### Command-line options
+
+```
+$ ./rpatchur --help
+rpatchur 0.1.0
+LinkZ <wanthost@gmail.com>
+A customizable patcher for Ragnarok Online
+
+USAGE:
+    rpatchur [OPTIONS]
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+
+OPTIONS:
+    -w, --working-directory <GAME_DIRECTORY>    Sets a custom working directory
+```
 
 ### Configuration File
 
@@ -48,12 +89,16 @@ Here's a description of each field used in the configuration file.
   * `resizable` *(bool):* Make the main window resizable.
 * `play`: Configure the *Play* button's behavior.
   * `path` *(string):* Relative path to the game executable.
-  * `argument` *(string):* Command-line arguments to pass to the executable.
-  Can be empty.
+  * `arguments` *(list[string]):* Command-line arguments to pass to the
+    executable.
+  * `exit_on_success` *(bool, optional):* Patcher exits when the game client is
+    successfully started. Defaults to `true`.
 * `setup`: Configure the *Setup* button's behavior.
   * `path` *(string):* Relative path to the setup executable.
-  * `argument` *(string):* Command-line arguments to pass to the executable.
-  Can be empty.
+  * `arguments` *(list[string]):* Command-line arguments to pass to the
+    executable.
+  * `exit_on_success` *(bool, optional):* Patcher exits when the setup software is
+    successfully started. Defaults to `false`.
 * `web`
   * `index_url` *(string):* URL of the web page to use as the UI.
   * `plist_url` *(string):* URL of the *plist.txt* file containing the list of
@@ -80,14 +125,20 @@ is that `rpatchur` uses the system's web renderer (i.e. Internet Explorer on
 Windows). Nowadays, most Windows systems have Internet Explorer 11 installed,
 so you have to make your web application compatible with this browser, at least.
 
-You can find an example of a bootstrap-based UI (compatible with Internet
-Explorer >= 10)
+You can find an example of a bootstrap-based patcher UI (compatible with
+Internet Explorer >= 10)
 [here](https://github.com/L1nkZ/rpatchur/blob/master/examples/bootstrap/).
+
+You can find an example of a bootstrap-based launcher UI (compatible with
+Internet Explorer >= 10)
+[here](https://github.com/L1nkZ/rpatchur/blob/master/examples/basic_launcher/).
 
 #### JavaScript Bindings
 
 The web view interacts with the patcher through two-way JavaScript bindings.
-There are a few JavaScript functions that can be called during execution:
+There are a few JavaScript functions that can be called during execution.
+
+**Functions without arguments**
 
 * `play`: Executes the configured game executable.
 * `setup`: Executes the configured setup executable.
@@ -99,6 +150,26 @@ There are a few JavaScript functions that can be called during execution:
 These functions do not take any argument and have to be invoked through a
 particular `external.invoke` function. For example, to invoke the `setup`
 function, you should call `external.invoke('setup')` from your JavaScript code.
+These functions do not return anything.
+
+**Functions with arguments**
+
+* `login`: Executes the configured game executable in SSO mode, with the
+  provided credentials.
+
+This function takes two arguments and can be invoked with a call to
+`external.invoke` as well. This function doesn't return anything.
+For example you can call it like so:
+```javascript
+external.invoke(JSON.stringify({
+    function: 'login',
+    parameters: {
+        'login': login, 'password': password
+    }
+}));
+```
+
+**Callbacks**
 
 The patcher also invokes some callbacks during execution:
 
