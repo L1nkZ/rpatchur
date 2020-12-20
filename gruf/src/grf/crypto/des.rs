@@ -215,6 +215,7 @@ fn apply_sboxes(input: u64) -> u64 {
 }
 
 impl Des {
+    #[allow(dead_code)]
     pub fn encrypt_block_1_round(&self, mut data: u64) -> u64 {
         data = ip(data);
         data = round(data, *self.keys.first().unwrap());

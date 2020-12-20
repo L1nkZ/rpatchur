@@ -248,9 +248,7 @@ struct LoginParameters {
 fn handle_login(webview: &mut WebView<WebViewUserData>, parameters: Value) {
     let result: serde_json::Result<LoginParameters> = serde_json::from_value(parameters);
     match result {
-        Err(e) => {
-            log::error!("Invalid arguments given for 'login': {}", e)
-        }
+        Err(e) => log::error!("Invalid arguments given for 'login': {}", e),
         Ok(login_params) => {
             let mut play_arguments = webview.user_data().patcher_config.play.arguments.clone();
             // Push credentials to the list of arguments
@@ -261,7 +259,7 @@ fn handle_login(webview: &mut WebView<WebViewUserData>, parameters: Value) {
     }
 }
 
-fn start_game_client(webview: &mut WebView<WebViewUserData>, client_arguments: &Vec<String>) {
+fn start_game_client(webview: &mut WebView<WebViewUserData>, client_arguments: &[String]) {
     let client_exe: &String = &webview.user_data().patcher_config.play.path;
     let exit_on_success = webview
         .user_data()

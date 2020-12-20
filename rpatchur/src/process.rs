@@ -4,7 +4,7 @@ use anyhow::Result;
 ///
 /// This is the Windows version.
 #[cfg(windows)]
-pub fn start_executable<I, S>(exe_path: &String, exe_arguments: I) -> Result<bool>
+pub fn start_executable<I, S>(exe_path: &str, exe_arguments: I) -> Result<bool>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
@@ -20,7 +20,7 @@ where
 ///
 /// This is the non-Windows version.
 #[cfg(not(windows))]
-pub fn start_executable<I, S>(exe_path: &String, exe_arguments: I) -> Result<bool>
+pub fn start_executable<I, S>(exe_path: &str, exe_arguments: I) -> Result<bool>
 where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
