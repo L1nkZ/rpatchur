@@ -7,8 +7,7 @@ build() {
     if [[ $TARGET != *-musl ]]; then
         cargo build --target "$TARGET" --release --verbose
     else
-        docker build -t build-"$PROJECT_NAME" -f docker/Dockerfile-musl .
-        docker run -v $(pwd):/home/rust/src build-"$PROJECT_NAME" --release --verbose
+        docker run -v "$TRAVIS_BUILD_DIR":/home/rust/src build-"$PROJECT_NAME" --release --verbose
     fi
 }
 
