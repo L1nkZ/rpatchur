@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
+use crate::thor::{ThorMode, MULTIPLE_FILES_TABLE_DESC_SIZE};
 use crate::{GrufError, Result};
 use crc::crc32;
 use encoding::label::encoding_from_whatwg_label;
@@ -13,12 +14,11 @@ use flate2::read::ZlibDecoder;
 use nom::number::complete::{le_i16, le_i32, le_u32, le_u8};
 use nom::*;
 
-const HEADER_MAGIC: &str = "ASSF (C) 2007 Aeomin DEV";
+pub const THOR_HEADER_MAGIC: &[u8; 24] = b"ASSF (C) 2007 Aeomin DEV";
 const INTEGRITY_FILE_NAME: &str = "data.integrity";
 // Packed structs' sizes in bytes
-const MULTIPLE_FILES_TABLE_SIZE: usize = 2 * std::mem::size_of::<i32>();
 const MAX_FILE_NAME_SIZE: usize = 256;
-const HEADER_MAX_SIZE: usize = HEADER_MAGIC.len() + 0x8 + MAX_FILE_NAME_SIZE;
+const HEADER_MAX_SIZE: usize = THOR_HEADER_MAGIC.len() + 0x8 + MAX_FILE_NAME_SIZE;
 const SINGLE_FILE_ENTRY_MAX_SIZE: usize = 9 + MAX_FILE_NAME_SIZE;
 
 pub type ThorPatchList = Vec<ThorPatchInfo>;
@@ -207,13 +207,6 @@ pub struct ThorHeader {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum ThorMode {
-    SingleFile,
-    MultipleFiles,
-    Invalid,
-}
-
-#[derive(Debug, PartialEq, Eq)]
 enum ThorTable {
     SingleFile(SingleFileTableDesc),
     MultipleFiles(MultipleFilesTableDesc),
@@ -273,7 +266,7 @@ fn is_file_removed(flags: u8) -> bool {
 
 named!(parse_thor_header<&[u8], ThorHeader>,
     do_parse!(
-        tag!(HEADER_MAGIC)
+        tag!(THOR_HEADER_MAGIC)
             >> use_grf_merging: le_u8
             >> file_count: le_u32
             >> mode: le_i16
@@ -383,7 +376,7 @@ named!(parse_multiple_files_entries<&[u8], HashMap<String, ThorFileEntry>>,
 
 pub fn parse_thor_patch<R: Seek + Read>(reader: &mut R) -> Result<ThorContainer> {
     const HEADER_EXTENDED_MAX_SIZE: usize =
-        HEADER_MAX_SIZE + MULTIPLE_FILES_TABLE_SIZE + SINGLE_FILE_ENTRY_MAX_SIZE;
+        HEADER_MAX_SIZE + MULTIPLE_FILES_TABLE_DESC_SIZE + SINGLE_FILE_ENTRY_MAX_SIZE;
     let mut thor_header_buf = Vec::with_capacity(HEADER_EXTENDED_MAX_SIZE);
     let mut reader_chunk = reader.take(thor_header_buf.capacity() as u64);
     reader_chunk.read_to_end(&mut thor_header_buf)?;

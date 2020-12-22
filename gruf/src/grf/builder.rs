@@ -5,13 +5,11 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use crate::grf::dyn_alloc;
-use crate::grf::dyn_alloc::AvailableChunkList;
+use crate::archive::{serialize_as_win1252_cstr_into, GenericFileEntry};
+use crate::grf::dyn_alloc::{self, AvailableChunkList};
 use crate::grf::{GrfArchive, GRF_HEADER_MAGIC, GRF_HEADER_SIZE};
 use crate::thor::ThorArchive;
 use crate::{GrufError, Result};
-use encoding::label::encoding_from_whatwg_label;
-use encoding::EncoderTrap;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use serde::Serialize;
@@ -26,13 +24,6 @@ pub struct GrfArchiveBuilder<W: Write + Seek> {
     version_minor: u32,
     entries: HashMap<String, GenericFileEntry>,
     chunks: AvailableChunkList,
-}
-
-struct GenericFileEntry {
-    pub offset: u64,
-    // Note(LinkZ): u32 limited by the GRF file format
-    pub size: u32,
-    pub size_compressed: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -53,19 +44,6 @@ struct SerializableGrfFileEntry200 {
     size: u32,
     entry_type: u8,
     offset: u32,
-}
-
-fn serialize_win1252cstring<W>(string: &str, mut writer: W) -> Result<()>
-where
-    W: Write,
-{
-    let decoder = encoding_from_whatwg_label("windows-1252")
-        .ok_or_else(|| GrufError::serialization_error("Encoder unavailable"))?;
-    let mut vec = decoder
-        .encode(string, EncoderTrap::Strict)
-        .map_err(|_| GrufError::serialization_error("Encoding failed"))?;
-    vec.push(0); // NUL char terminator
-    Ok(writer.write_all(vec.as_slice())?)
 }
 
 impl<W: Write + Seek> GrfArchiveBuilder<W> {
@@ -235,7 +213,7 @@ impl<W: Write + Seek> GrfArchiveBuilder<W> {
                 entry_type: 1,
                 offset: (entry.offset - GRF_HEADER_SIZE as u64) as u32,
             };
-            serialize_win1252cstring(&relative_path, &mut table)?;
+            serialize_as_win1252_cstr_into(&mut table, &relative_path)?;
             bincode::serialize_into(&mut table, &grf_file_entry)?;
         }
         // Compress the table
