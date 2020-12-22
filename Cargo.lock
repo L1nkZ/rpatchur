@@ -558,7 +558,7 @@ dependencies = [
 
 [[package]]
 name = "gruf"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "bincode",
  "crc",
@@ -1261,7 +1261,7 @@ dependencies = [
 
 [[package]]
 name = "rpatchur"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "bincode",
