@@ -423,10 +423,18 @@ pub fn parse_thor_patch<R: Seek + Read>(reader: &mut R) -> Result<ThorContainer>
             file_chunk.read_to_end(&mut compressed_table)?;
             let mut decoder = ZlibDecoder::new(compressed_table.as_slice());
             let mut decompressed_table = vec![];
-            let _decompressed_size = decoder.read_to_end(&mut decompressed_table)?;
+            let decompressed_size = decoder.read_to_end(&mut decompressed_table)?;
             // Parse multiple entries
-            let (_, entries) = parse_multiple_files_entries(decompressed_table.as_slice())
-                .map_err(|_| GrufError::parsing_error("Failed to parse THOR file entries"))?;
+            let entries = match decompressed_size {
+                0 => HashMap::new(), // No entries
+                _ => {
+                    let (_, entries) = parse_multiple_files_entries(decompressed_table.as_slice())
+                        .map_err(|_| {
+                            GrufError::parsing_error("Failed to parse THOR file entries")
+                        })?;
+                    entries
+                }
+            };
             Ok(ThorContainer {
                 header,
                 table: ThorTable::MultipleFiles(table),
@@ -472,6 +480,16 @@ mod tests {
             assert!(expected_content.contains_key(&patch_info.index));
             assert_eq!(patch_info.file_name, expected_content[&patch_info.index]);
         }
+    }
+
+    #[test]
+    fn test_open_empty_container() {
+        let thor_dir_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tests/thor");
+        let thor_file_path = thor_dir_path.join("empty.thor");
+        let thor_archive = ThorArchive::open(&thor_file_path).unwrap();
+        assert_eq!(thor_archive.file_count(), 0);
+        assert_eq!(thor_archive.target_grf_name(), "");
+        assert!(thor_archive.use_grf_merging());
     }
 
     #[test]
