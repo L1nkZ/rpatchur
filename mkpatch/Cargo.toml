@@ -1,0 +1,17 @@
+[package]
+name = "mkpatch"
+version = "0.1.0"
+authors = ["LinkZ <wanthost@gmail.com>"]
+edition = "2018"
+description = "Patch generation utility for THOR patchers"
+
+[dependencies]
+gruf = { version = "0.2", path = "../gruf" }
+
+log = "0.4"
+simple_logger = "1.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_yaml = "0.8"
+anyhow = "1.0"
+structopt = "0.3"
+walkdir = "2.3"

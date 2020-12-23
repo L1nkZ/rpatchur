@@ -1,0 +1,11 @@
+use_grf_merging: true          # Set to `true` to patch a GRF and to `false` to patch the game's directory.
+target_grf_name: myserver.grf  # (Optional) GRF that'll be patched. Defaults to the default GRF (set by the patcher).
+include_checksums: true        # (Optional) Set to `true` to include file checksums into the archive. Defaults to `false`.
+
+# Definition of the actual patch content
+entries:
+  # Remove a single file
+  - relative_path: data\texture\À¯ÀúÀÎÅÍÆäÀÌ½º\inventory\icon_num.bmp
+    is_removed: true
+  # Add all the files that the (local) folder contains
+  - relative_path: data\model

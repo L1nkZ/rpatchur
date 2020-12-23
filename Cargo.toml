@@ -2,4 +2,4 @@
 lto = true
 
 [workspace]
-members = ["gruf", "rpatchur"]
+members = ["gruf", "rpatchur", "mkpatch"]
