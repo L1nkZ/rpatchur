@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{self, Cursor, Read, Seek, SeekFrom, Write};
 
-use crate::archive::{serialize_as_win1252_str_into, GenericFileEntry};
-use crate::thor::{ThorMode, MULTIPLE_FILES_TABLE_DESC_SIZE, THOR_HEADER_MAGIC};
+use crate::archive::{serialize_as_win1252_str_into, serialize_to_win1252, GenericFileEntry};
+use crate::thor::{
+    ThorMode, INTEGRITY_FILE_NAME, MULTIPLE_FILES_TABLE_DESC_SIZE, THOR_HEADER_MAGIC,
+};
 use crate::Result;
+use crc::crc32::{self, Hasher32};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use serde::Serialize;
@@ -14,10 +17,16 @@ const THOR_HEADER_FIXED_SIZE: usize = THOR_HEADER_MAGIC.len() + 0x8;
 
 pub struct ThorArchiveBuilder<W: Write + Seek> {
     obj: Box<W>,
-    entries: HashMap<String, Option<GenericFileEntry>>,
+    entries: HashMap<String, Option<BuilderFileEntry>>,
     finished: bool,
     use_grf_merging: bool,
     target_grf_name: String,
+    include_checksums: bool,
+}
+
+struct BuilderFileEntry {
+    generic: GenericFileEntry,
+    checksum: u32,
 }
 
 #[derive(Debug, Serialize)]
@@ -49,7 +58,12 @@ pub struct SerializableThorFileEntryAdd {
 }
 
 impl<W: Write + Seek> ThorArchiveBuilder<W> {
-    pub fn new(mut obj: W, use_grf_merging: bool, target_grf_name: Option<String>) -> Result<Self> {
+    pub fn new(
+        mut obj: W,
+        use_grf_merging: bool,
+        target_grf_name: Option<String>,
+        include_checksums: bool,
+    ) -> Result<Self> {
         let target_grf_name = target_grf_name.unwrap_or_default();
         // Placeholder for the THOR header
         let place_holder =
@@ -64,13 +78,21 @@ impl<W: Write + Seek> ThorArchiveBuilder<W> {
             finished: false,
             use_grf_merging,
             target_grf_name,
+            include_checksums,
         })
     }
 
-    pub fn append_file_update<R: Read>(&mut self, entry_path: String, mut data: R) -> Result<()> {
+    pub fn append_file_update<R>(&mut self, entry_path: String, mut data: R) -> Result<()>
+    where
+        R: Read,
+    {
         // Compress it
         let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
-        let data_size = io::copy(data.by_ref(), &mut encoder)?;
+        let (data_size, data_checksum) = if self.include_checksums {
+            copy_and_measure_crc32(data.by_ref(), &mut encoder)?
+        } else {
+            (io::copy(data.by_ref(), &mut encoder)?, 0)
+        };
         // Write compressed data
         let compressed_data = encoder.finish()?;
         let compressed_data_size = compressed_data.len();
@@ -80,10 +102,13 @@ impl<W: Write + Seek> ThorArchiveBuilder<W> {
         let _ = io::copy(&mut compressed_reader, self.obj.by_ref())?;
         self.entries.insert(
             entry_path,
-            Some(GenericFileEntry {
-                offset,
-                size: u32::try_from(data_size)?,
-                size_compressed: u32::try_from(compressed_data_size)?,
+            Some(BuilderFileEntry {
+                generic: GenericFileEntry {
+                    offset,
+                    size: u32::try_from(data_size)?,
+                    size_compressed: u32::try_from(compressed_data_size)?,
+                },
+                checksum: data_checksum,
             }),
         );
         Ok(())
@@ -99,6 +124,10 @@ impl<W: Write + Seek> ThorArchiveBuilder<W> {
         }
         self.finished = true;
 
+        // Append 'data.integrity' if needed
+        if self.include_checksums {
+            self.append_data_integrity()?;
+        }
         let (file_table_offset, compressed_table_size) = self.write_file_table()?;
         // Update the header
         self.obj.seek(SeekFrom::Start(0))?;
@@ -129,9 +158,9 @@ impl<W: Write + Seek> ThorArchiveBuilder<W> {
                     // File update or file creation
                     let thor_file_entry = SerializableThorFileEntryAdd {
                         flags: 0,
-                        offset: u32::try_from(entry.offset)?,
-                        size: entry.size,
-                        size_compressed: entry.size_compressed,
+                        offset: u32::try_from(entry.generic.offset)?,
+                        size: entry.generic.size,
+                        size_compressed: entry.generic.size_compressed,
                     };
                     serialize_thor_slice_into(&mut table, rel_path_win1252.as_slice())?;
                     bincode::serialize_into(&mut table, &thor_file_entry)?;
@@ -148,6 +177,26 @@ impl<W: Write + Seek> ThorArchiveBuilder<W> {
         self.obj.write_all(&compressed_table)?;
         // Return file table's offset
         Ok((table_offset, compressed_table_size))
+    }
+
+    fn append_data_integrity(&mut self) -> Result<()> {
+        let data_integrity_content = self.generate_data_integrity()?;
+        self.append_file_update(
+            INTEGRITY_FILE_NAME.to_string(),
+            data_integrity_content.as_slice(),
+        )?;
+        Ok(())
+    }
+
+    fn generate_data_integrity(&self) -> Result<Vec<u8>> {
+        let content = self.entries.iter().fold(String::new(), |acc, v| {
+            if let Some(entry) = v.1 {
+                acc + format!("{}=0x{:08x}\r\n", v.0, entry.checksum).as_str()
+            } else {
+                acc
+            }
+        });
+        serialize_to_win1252(content.as_str())
     }
 }
 
@@ -213,6 +262,32 @@ fn serialize_thor_slice_into<W: Write>(mut writer: W, slice: &[u8]) -> Result<()
     Ok(())
 }
 
+/// Computes a CRC32 checksum from a reader.
+fn copy_and_measure_crc32<R: ?Sized, W: ?Sized>(
+    reader: &mut R,
+    writer: &mut W,
+) -> Result<(u64, u32)>
+where
+    R: Read,
+    W: Write,
+{
+    // Use an 8KiB buffer
+    let mut buf = [0 as u8; 8 * 1024];
+    let mut digest = crc32::Digest::new(crc::crc32::IEEE);
+    let mut written = 0;
+    loop {
+        let len = match reader.read(&mut buf) {
+            Ok(0) => return Ok((written, digest.sum32())),
+            Ok(len) => len,
+            Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        };
+        digest.write(&buf[..len]);
+        writer.write_all(&buf[..len])?;
+        written += len as u64;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,7 +300,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let output_path = temp_dir.path().join("builder.thor");
         let output_file = File::create(&output_path).unwrap();
-        let mut builder = ThorArchiveBuilder::new(output_file, false, None).unwrap();
+        let mut builder = ThorArchiveBuilder::new(output_file, false, None, false).unwrap();
         builder.finish().unwrap();
     }
 
@@ -235,7 +310,7 @@ mod tests {
         {
             let output_path = temp_dir.path().join("builder1.thor");
             let output_file = File::create(&output_path).unwrap();
-            let mut builder = ThorArchiveBuilder::new(output_file, false, None).unwrap();
+            let mut builder = ThorArchiveBuilder::new(output_file, false, None, false).unwrap();
             builder.finish().unwrap();
             let thor_archive = ThorArchive::open(&output_path).unwrap();
             assert_eq!(thor_archive.file_count(), 0);
@@ -247,7 +322,8 @@ mod tests {
             let output_file = File::create(&output_path).unwrap();
             let grf_name = "myserver.grf";
             let mut builder =
-                ThorArchiveBuilder::new(output_file, true, Some(grf_name.to_string())).unwrap();
+                ThorArchiveBuilder::new(output_file, true, Some(grf_name.to_string()), false)
+                    .unwrap();
             builder.finish().unwrap();
             let thor_archive = ThorArchive::open(&output_path).unwrap();
             assert_eq!(thor_archive.file_count(), 0);
@@ -262,7 +338,7 @@ mod tests {
         let output_path = temp_dir.path().join("builder.thor");
         {
             let output_file = File::create(&output_path).unwrap();
-            let mut builder = ThorArchiveBuilder::new(output_file, false, None).unwrap();
+            let mut builder = ThorArchiveBuilder::new(output_file, false, None, false).unwrap();
             builder.append_file_removal("data/test1".to_string());
             builder.append_file_removal("data/test2".to_string());
         }
@@ -289,7 +365,7 @@ mod tests {
                 .collect();
         {
             let output_file = File::create(&output_path).unwrap();
-            let mut builder = ThorArchiveBuilder::new(output_file, false, None).unwrap();
+            let mut builder = ThorArchiveBuilder::new(output_file, false, None, false).unwrap();
             for entry in &expected_content {
                 builder
                     .append_file_update(entry.0.to_string(), entry.1.as_slice())
@@ -310,6 +386,30 @@ mod tests {
                 let content = thor_archive.read_file_content(file_path).unwrap();
                 assert_eq!(&content, expected_content);
             }
+        }
+    }
+
+    #[test]
+    fn test_data_integrity() {
+        let temp_dir = tempdir().unwrap();
+        let output_path = temp_dir.path().join("builder.thor");
+        let expected_content: HashMap<&str, Vec<u8>> =
+            [("data\\test1", vec![1, 2, 3]), ("data\\test2", vec![5, 6])]
+                .iter()
+                .cloned()
+                .collect();
+        {
+            let output_file = File::create(&output_path).unwrap();
+            let mut builder = ThorArchiveBuilder::new(output_file, false, None, true).unwrap();
+            for entry in &expected_content {
+                builder
+                    .append_file_update(entry.0.to_string(), entry.1.as_slice())
+                    .unwrap();
+            }
+        }
+        {
+            let mut thor_archive = ThorArchive::open(&output_path).unwrap();
+            assert!(thor_archive.is_valid().unwrap());
         }
     }
 }

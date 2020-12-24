@@ -5,7 +5,9 @@ use std::hash::{Hash, Hasher};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
-use crate::thor::{ThorMode, MULTIPLE_FILES_TABLE_DESC_SIZE};
+use crate::thor::{
+    ThorMode, INTEGRITY_FILE_NAME, MULTIPLE_FILES_TABLE_DESC_SIZE, THOR_HEADER_MAGIC,
+};
 use crate::{GrufError, Result};
 use crc::crc32;
 use encoding::label::encoding_from_whatwg_label;
@@ -14,8 +16,6 @@ use flate2::read::ZlibDecoder;
 use nom::number::complete::{le_i16, le_i32, le_u32, le_u8};
 use nom::*;
 
-pub const THOR_HEADER_MAGIC: &[u8; 24] = b"ASSF (C) 2007 Aeomin DEV";
-const INTEGRITY_FILE_NAME: &str = "data.integrity";
 // Packed structs' sizes in bytes
 const MAX_FILE_NAME_SIZE: usize = 256;
 const HEADER_MAX_SIZE: usize = THOR_HEADER_MAGIC.len() + 0x8 + MAX_FILE_NAME_SIZE;

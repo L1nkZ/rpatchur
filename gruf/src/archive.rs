@@ -31,7 +31,7 @@ pub fn serialize_as_win1252_str_into<W: Write>(mut writer: W, string: &str) -> R
     Ok(())
 }
 
-fn serialize_to_win1252(string: &str) -> Result<Vec<u8>> {
+pub fn serialize_to_win1252(string: &str) -> Result<Vec<u8>> {
     let decoder = encoding_from_whatwg_label("windows-1252")
         .ok_or_else(|| GrufError::serialization_error("Encoder unavailable"))?;
     decoder
