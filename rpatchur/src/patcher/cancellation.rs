@@ -24,7 +24,7 @@ pub async fn wait_for_cancellation(
 pub fn check_for_cancellation(
     patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
 ) -> Option<InterruptibleFnError> {
-    if let Ok(cmd) = patching_thread_rx.try_recv() {
+    if let Ok(cmd) = patching_thread_rx.poll_recv() {
         match cmd {
             PatcherCommand::Cancel => Some(InterruptibleFnError::Interrupted),
             _ => None,

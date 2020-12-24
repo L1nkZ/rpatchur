@@ -77,8 +77,6 @@ fn main() {
 
 /// Builds a tokio runtime with a threaded scheduler and a reactor
 fn build_tokio_runtime() -> Result<runtime::Runtime> {
-    Ok(runtime::Builder::new()
-        .threaded_scheduler()
-        .enable_all()
-        .build()?)
+    let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
+    Ok(rt)
 }
