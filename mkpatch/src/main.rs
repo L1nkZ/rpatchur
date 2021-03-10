@@ -95,18 +95,21 @@ where
         patch_definition.include_checksums,
     )?;
     for entry in patch_definition.entries {
+        let win32_relative_path = win32_path(&entry.relative_path);
         if entry.is_removed {
-            log::trace!("'{}' will be REMOVED", &entry.relative_path);
-            archive_builder.append_file_removal(entry.relative_path);
+            log::trace!("'{}' will be REMOVED", &win32_relative_path);
+            archive_builder.append_file_removal(win32_relative_path);
             continue;
         }
 
-        let native_path = patch_data_directory.as_ref().join(&entry.relative_path);
+        let native_path = patch_data_directory
+            .as_ref()
+            .join(posix_path(entry.relative_path));
         if native_path.is_file() {
             // Path points to a single file
-            log::trace!("'{}' will be UPDATED", &entry.relative_path);
+            log::trace!("'{}' will be UPDATED", &win32_relative_path);
             let file = File::open(native_path)?;
-            archive_builder.append_file_update(entry.relative_path, file)?;
+            archive_builder.append_file_update(win32_relative_path, file)?;
         } else if native_path.is_dir() {
             // Path points to a directory
             append_directory_update(
@@ -138,10 +141,13 @@ where
         let entry = entry?;
         if entry.file_type().is_file() {
             let rel_path = entry.path().strip_prefix(patch_data_directory.as_ref())?;
-            let rel_path_str_lossy = rel_path.to_string_lossy();
-            log::trace!("'{}' will be UPDATED", rel_path_str_lossy);
+            let rel_path_str = rel_path
+                .to_str()
+                .ok_or_else(|| anyhow!("Invalid file path encountered"))?;
+            let win32_relative_path = win32_path(rel_path_str);
+            log::trace!("'{}' will be UPDATED", &win32_relative_path);
             let file = File::open(entry.path())?;
-            archive_builder.append_file_update(rel_path_str_lossy.to_string(), file)?;
+            archive_builder.append_file_update(win32_relative_path, file)?;
         }
     }
     Ok(())
@@ -181,4 +187,13 @@ fn init_logger(verbose: bool) -> Result<()> {
         .with_module_level(PKG_NAME, level_filter)
         .init()?;
     Ok(())
+}
+
+// Utility functions to make sure paths are serialized/accessed correctly between posix and Windows platforms
+fn posix_path<S: AsRef<str>>(path: S) -> String {
+    path.as_ref().replace("\\", "/")
+}
+
+fn win32_path<S: AsRef<str>>(path: S) -> String {
+    path.as_ref().replace("/", "\\")
 }
