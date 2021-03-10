@@ -30,10 +30,12 @@ test_script:
   - cargo test
 
 before_deploy:
-  # Generate artifacts for release
-  - cargo build --release
+  # Generate artifacts for release (using --exclude to avoid log's feature clash)
+  - cargo build --release --verbose --workspace --exclude rpatchur
+  - cargo build --release --verbose --workspace --exclude mkpatch
   - mkdir staging
   - copy target\release\rpatchur.exe staging
+  - copy target\release\mkpatch.exe staging
   - copy README.md staging
   - copy LICENSE-APACHE staging
   - copy LICENSE-MIT staging

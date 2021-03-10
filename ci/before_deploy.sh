@@ -5,9 +5,11 @@ set -ex
 
 build() {
     if [[ $TARGET != *-musl ]]; then
-        cargo build --target "$TARGET" --release --verbose
+        cargo build --target "$TARGET" --release --verbose --workspace --exclude rpatchur
+        cargo build --target "$TARGET" --release --verbose --workspace --exclude mkpatch
     else
-        docker run -v "$TRAVIS_BUILD_DIR":/home/rust/src build-"$PROJECT_NAME" --release --verbose
+        docker run -v "$TRAVIS_BUILD_DIR":/home/rust/src build-"$PROJECT_NAME" --release --verbose --workspace --exclude rpatchur
+        docker run -v "$TRAVIS_BUILD_DIR":/home/rust/src build-"$PROJECT_NAME" --release --verbose --workspace --exclude mkpatch
     fi
 }
 
@@ -23,9 +25,12 @@ pack() {
     # create a "staging" directory
     mkdir "$tempdir/$package_name"
 
-    # copying the main binary
+    # copying the binaries
     cp "target/$TARGET/release/$PROJECT_NAME" "$tempdir/$package_name/"
     strip "$tempdir/$package_name/$PROJECT_NAME"
+
+    cp "target/$TARGET/release/mkpatch" "$tempdir/$package_name/"
+    strip "$tempdir/$package_name/mkpatch"
 
     # readme and license
     cp README.md "$tempdir/$package_name"
