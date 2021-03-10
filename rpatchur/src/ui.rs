@@ -258,11 +258,12 @@ fn handle_login(webview: &mut WebView<WebViewUserData>, parameters: Value) {
             ];
             play_arguments.extend(
                 webview
-                .user_data()
-                .patcher_config
-                .play
-                .arguments
-                .clone()
+                    .user_data()
+                    .patcher_config
+                    .play
+                    .arguments
+                    .iter()
+                    .cloned(),
             );
             start_game_client(webview, &play_arguments);
         }

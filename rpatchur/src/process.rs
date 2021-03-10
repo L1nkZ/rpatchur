@@ -13,7 +13,7 @@ where
     let exe_parameter = exe_arguments
         .into_iter()
         .fold(String::new(), |a: String, b| a + " " + b.as_ref() + "");
-    windows::spawn_elevated_win32_process(exe_path, &exe_parameter)
+    windows::win32_spawn_process_runas(exe_path, &exe_parameter)
 }
 
 /// Starts an executable file in a cross-platform way.
@@ -58,40 +58,45 @@ mod windows {
 
     /// This function is required to start processes that require elevation, from
     /// a non-elevated process.
-    pub fn spawn_elevated_win32_process<S>(path: S, parameter: S) -> Result<bool>
+    pub fn win32_spawn_process_runas<S>(path: S, parameter: S) -> Result<bool>
     where
         S: AsRef<OsStr>,
     {
         use std::ptr;
         use winapi::ctypes::c_int;
-        use winapi::shared::minwindef::HINSTANCE;
-        use winapi::shared::ntdef::LPCWSTR;
-        use winapi::shared::windef::HWND;
+        use winapi::shared::minwindef::{BOOL, ULONG};
+        use winapi::um::shellapi::SHELLEXECUTEINFOW;
         extern "system" {
-            pub fn ShellExecuteW(
-                hwnd: HWND,
-                lpOperation: LPCWSTR,
-                lpFile: LPCWSTR,
-                lpParameters: LPCWSTR,
-                lpDirectory: LPCWSTR,
-                nShowCmd: c_int,
-            ) -> HINSTANCE;
+            pub fn ShellExecuteExW(pExecInfo: *mut SHELLEXECUTEINFOW) -> BOOL;
         }
+        const SEE_MASK_CLASSNAME: ULONG = 1;
         const SW_SHOW: c_int = 5;
 
-        let path = to_u16s(path)?;
+        // Note: It seems `path` has to be absolute for the class overwrite to work
+        let exe_path = std::env::current_dir()?.join(path.as_ref());
+        let exe_path = to_u16s(exe_path.to_str().unwrap_or(""))?;
         let parameter = to_u16s(parameter)?;
         let operation = to_u16s("runas")?;
-        let result = unsafe {
-            ShellExecuteW(
-                ptr::null_mut(),
-                operation.as_ptr(),
-                path.as_ptr(),
-                parameter.as_ptr(),
-                ptr::null(),
-                SW_SHOW,
-            )
+        let class = to_u16s("exefile")?;
+        let mut execute_info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_CLASSNAME,
+            hwnd: ptr::null_mut(),
+            lpVerb: operation.as_ptr(),
+            lpFile: exe_path.as_ptr(),
+            lpParameters: parameter.as_ptr(),
+            lpDirectory: ptr::null_mut(),
+            nShow: SW_SHOW,
+            hInstApp: ptr::null_mut(),
+            lpIDList: ptr::null_mut(),
+            lpClass: class.as_ptr(),
+            hkeyClass: ptr::null_mut(),
+            dwHotKey: 0,
+            hMonitor: ptr::null_mut(),
+            hProcess: ptr::null_mut(),
         };
-        Ok(result as usize > 32)
+
+        let result = unsafe { ShellExecuteExW(&mut execute_info) };
+        Ok(result != 0)
     }
 }
