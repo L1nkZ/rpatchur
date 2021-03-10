@@ -272,7 +272,7 @@ where
     W: Write,
 {
     // Use an 8KiB buffer
-    let mut buf = [0 as u8; 8 * 1024];
+    let mut buf = [0_u8; 8 * 1024];
     let mut digest = crc32::Digest::new(crc::crc32::IEEE);
     let mut written = 0;
     loop {

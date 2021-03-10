@@ -40,13 +40,15 @@ struct Opt {
 }
 
 fn run(cli_args: Opt) -> Result<()> {
-    let patch_data_directory = cli_args.patch_data_directory.unwrap_or(PathBuf::from("."));
+    let patch_data_directory = cli_args
+        .patch_data_directory
+        .unwrap_or_else(|| PathBuf::from("."));
     let output_file_path = cli_args.output_file.unwrap_or(PathBuf::from(
         cli_args
             .patch_definition_file
             .with_extension("thor")
             .file_name()
-            .ok_or(anyhow!("Invalid patch definition file name"))?,
+            .ok_or_else(|| anyhow!("Invalid patch definition file name"))?,
     ));
 
     // Parse the YAML definition file

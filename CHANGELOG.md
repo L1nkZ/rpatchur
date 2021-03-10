@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.2.1] - 2021-03-10
 ### Added
 - Implement THOR archive generation in `gruf`.
 - Add a new `mkpatch` utility. This is a command-line utility that can be used
@@ -8,6 +10,7 @@
 
 ### Changed
 - Compile binaries with `panic = 'abort'` in release.
+- Update `web-view` from v0.6.3 to v0.7.3.
 
 ## [0.2.0] - 2020-12-20
 ### Added

@@ -211,9 +211,9 @@ where
     // Shared reqwest client
     let client = reqwest::Client::new();
     // Shared value that contains the number of downloaded patches
-    let patch_number = Arc::new(Mutex::new(0 as usize));
+    let patch_number = Arc::new(Mutex::new(0_usize));
     // Shared tuple that's used to compute the download speed
-    let shared_progress_state = Arc::new(Mutex::new((Instant::now(), 0 as u64)));
+    let shared_progress_state = Arc::new(Mutex::new((Instant::now(), 0_u64)));
     let one_second = Duration::from_secs(1);
 
     // Collect stream of "PendingPatch" concurrently with an unordered_buffer

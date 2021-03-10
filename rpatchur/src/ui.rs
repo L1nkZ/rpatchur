@@ -15,7 +15,7 @@ pub struct UIController {
     web_view_handle: Handle<WebViewUserData>,
 }
 impl UIController {
-    pub fn new<'a>(web_view: &WebView<'a, WebViewUserData>) -> UIController {
+    pub fn new(web_view: &WebView<'_, WebViewUserData>) -> UIController {
         UIController {
             web_view_handle: web_view.handle(),
         }
@@ -107,10 +107,10 @@ where
 }
 
 /// Creates a `WebView` object with the appropriate settings for our needs.
-pub fn build_webview<'a>(
-    window_title: &'a str,
+pub fn build_webview(
+    window_title: &'_ str,
     user_data: WebViewUserData,
-) -> web_view::WVResult<WebView<'a, WebViewUserData>> {
+) -> web_view::WVResult<WebView<'_, WebViewUserData>> {
     web_view::builder()
         .title(window_title)
         .content(Content::Url(user_data.patcher_config.web.index_url.clone()))
