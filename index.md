@@ -58,7 +58,7 @@ page to use as the patcher's UI.
 
 ```
 $ ./rpatchur --help
-rpatchur 0.1.0
+rpatchur 0.2.1
 LinkZ <wanthost@gmail.com>
 A customizable patcher for Ragnarok Online
 
@@ -190,3 +190,58 @@ represents the number of patches that have been applied. `nbTotal` is an
 
 You can define these callbacks to receive useful information to display to the
 user.
+
+## mkpatch
+
+mkpatch is a cross-platform utility for generating THOR patch archives with a
+command-line interface.
+
+### Command-line options
+
+```
+$ ./mkpatch --help
+mkpatch 0.1.0
+LinkZ <wanthost@gmail.com>
+Patch generation utility for THOR patchers
+
+USAGE:
+    mkpatch [FLAGS] [OPTIONS] <patch-definition-file>
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+    -v, --verbose    Enable verbose logging
+
+OPTIONS:
+    -o, --output-file <output-file>
+            Path to the output archive (default: <patch_definition_file_name>.thor)
+
+    -p, --patch-data-directory <patch-data-directory>
+            Path to the directory that contains patch data (default: current working directory)
+
+
+ARGS:
+    <patch-definition-file>    Path to a patch definition file
+```
+
+### Usage
+
+Example:
+
+```
+$ ./mkpatch examples/patch.yml -p ~/myclient_files/
+2021-03-10 16:50:45,236 INFO  [mkpatch] Processing 'patch.yml'
+2021-03-10 16:50:45,237 INFO  [mkpatch] GRF merging: true
+2021-03-10 16:50:45,237 INFO  [mkpatch] Checksums included: true
+2021-03-10 16:50:45,237 INFO  [mkpatch] Target GRF: 'data.grf'
+2021-03-10 16:50:45,268 INFO  [mkpatch] Patch generated at 'patch.thor'
+```
+
+The executable returns `0` in case of success and a non-zero value in case of
+failure.
+
+The `--patch-data-directory` argument must point to a directory that contains
+the files declared in the patch definition file (e.g.,
+`data/texture/.../image.bmp`). For example, if you specify
+`--patch-data-directory /tmp/mydata`, `/tmp/mydata/data/texture/.../image.bmp`
+will be added to the archive as `data\texture\...\image.bmp`.
