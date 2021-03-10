@@ -46,6 +46,7 @@ Building
 --------
 
 The `rpatchur` directory contains the actual patcher code (UI, archive merging, etc.).
+The `mkpatch` directory contains a THOR patch archive generation utility.
 The `gruf` directory contains the core library for parsing and building GRF and THOR archives.
 
 To clone the repository and build everything, simply run:
@@ -76,7 +77,7 @@ The icon used for Windows executables was taken from
 License
 -------
 
-Copyright (c) 2020 rpatchur developers
+Copyright (c) 2020-2021 rpatchur developers
 
 `rpatchur` is distributed under the terms of both the MIT License and the Apache License 2.0.
 

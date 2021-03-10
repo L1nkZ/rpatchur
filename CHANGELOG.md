@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Implement THOR archive generation in `gruf`.
+- Add a new `mkpatch` utility. This is a command-line utility that can be used
+  to generate THOR patch archives in a cross-platform manner.
+
+### Changed
+- Compile binaries with `panic = 'abort'` in release.
 
 ## [0.2.0] - 2020-12-20
 ### Added
