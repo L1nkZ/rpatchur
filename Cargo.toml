@@ -1,5 +1,6 @@
 [profile.release]
 lto = true
+panic = 'abort'
 
 [workspace]
 members = ["gruf", "rpatchur", "mkpatch"]
