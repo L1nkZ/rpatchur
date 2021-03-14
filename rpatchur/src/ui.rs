@@ -250,10 +250,20 @@ fn handle_login(webview: &mut WebView<WebViewUserData>, parameters: Value) {
     match result {
         Err(e) => log::error!("Invalid arguments given for 'login': {}", e),
         Ok(login_params) => {
-            let mut play_arguments = webview.user_data().patcher_config.play.arguments.clone();
-            // Push credentials to the list of arguments
-            play_arguments.push(format!("-t:{}", login_params.password));
-            play_arguments.push(login_params.login);
+            // Push credentials to the list of arguments first
+            let mut play_arguments: Vec<String> = vec![
+                format!("-t:{}", login_params.password),
+                login_params.login,
+                "server".to_string(),
+            ];
+            play_arguments.extend(
+                webview
+                .user_data()
+                .patcher_config
+                .play
+                .arguments
+                .clone()
+            );
             start_game_client(webview, &play_arguments);
         }
     }

@@ -12,7 +12,7 @@ where
     // Fold parameter list into a String
     let exe_parameter = exe_arguments
         .into_iter()
-        .fold(String::new(), |a: String, b| a + " \"" + b.as_ref() + "\"");
+        .fold(String::new(), |a: String, b| a + " " + b.as_ref() + "");
     windows::spawn_elevated_win32_process(exe_path, &exe_parameter)
 }
 
