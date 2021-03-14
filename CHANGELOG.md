@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2021-03-14
+### Changed
+- Allow launching game clients and setup executables that do not have a `.exe`
+  extensions in their file name.
+
+### Fixed
+- Fix wrong command-line arguments' order preventing SSO login to work correctly
+  (thanks to @waken22 and @vstumpf).
+
 ## [0.2.1] - 2021-03-10
 ### Added
 - Implement THOR archive generation in `gruf`.

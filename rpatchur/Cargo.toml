@@ -1,6 +1,6 @@
 [package]
 name = "rpatchur"
-version = "0.2.1"
+version = "0.2.2"
 authors = ["LinkZ <wanthost@gmail.com>"]
 edition = "2018"
 build = "build.rs"
@@ -9,7 +9,7 @@ description = "A customizable patcher for Ragnarok Online"
 [package.metadata.winres]
 FileDescription = "A customizable patcher for Ragnarok Online"
 ProductName = "RPatchur"
-ProductVersion = "0.2.1"
+ProductVersion = "0.2.2"
 LegalCopyright = "Copyright © 2020-2021 rpatchur developers"
 
 [target.'cfg(windows)'.build-dependencies]

@@ -21,6 +21,7 @@ Features
 * THOR patch format support
 * Drop-in replacement for the Thor patcher
 * Cross-platform (Windows, Linux, macOS)
+* SSO login support (i.e., can act as a launcher)
 
 Known Limitations
 -----------------
