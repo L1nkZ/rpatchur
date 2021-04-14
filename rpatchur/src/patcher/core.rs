@@ -1,6 +1,9 @@
 use std::env;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 use std::time::{Duration, Instant};
 
 use super::cache::{read_cache_file, write_cache_file, PatcherCache};
@@ -17,7 +20,6 @@ use gruf::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
 use gruf::GrufError;
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
-use tokio::sync::Mutex;
 use url::Url;
 
 /// Representation of a pending patch (a patch that's been downloaded but has
@@ -208,9 +210,9 @@ where
     // Shared reqwest client
     let client = reqwest::Client::new();
     // Shared value that contains the number of downloaded patches
-    let patch_number = Arc::new(Mutex::new(0_usize));
+    let shared_patch_number = AtomicUsize::new(0_usize);
     // Shared tuple that's used to compute the download speed
-    let shared_progress_state = Arc::new(Mutex::new((Instant::now(), 0_u64)));
+    let shared_progress_state = Arc::new(std::sync::Mutex::new((Instant::now(), 0_u64)));
     let one_second = Duration::from_secs(1);
 
     // Collect stream of "PendingPatch" concurrently with an unordered_buffer
@@ -227,37 +229,39 @@ where
             .await
             .context("Failed to create temporary file")?;
         // Setup a progress callback that'll send the current download speed to the UI
+        let shared_patch_number_ref = &shared_patch_number;
         let shared_state = shared_progress_state.clone();
-        let patch_number_callback = patch_number.clone();
         let mut last_downloaded_bytes: u64 = 0;
         let mut progress_callback = move |dl_now, _| {
             let dl_delta = dl_now - last_downloaded_bytes;
             // Return download speed if the required time has elapsed (1s)
-            let downloaded_bytes_per_sec = block_on(async {
-                let mut shared_state = shared_state.lock().await;
-                shared_state.1 += dl_delta;
-                if shared_state.0.elapsed() >= one_second {
-                    let downloaded_bytes_per_sec = (shared_state.1 as f32
-                        / shared_state.0.elapsed().as_secs_f32())
-                    .round() as u64;
-                    shared_state.0 = Instant::now();
-                    shared_state.1 = 0;
-                    Some(downloaded_bytes_per_sec)
+            let downloaded_bytes_per_sec = {
+                if let Ok(mut shared_state) = shared_state.lock() {
+                    shared_state.1 += dl_delta;
+                    if shared_state.0.elapsed() >= one_second {
+                        let downloaded_bytes_per_sec = (shared_state.1 as f32
+                            / shared_state.0.elapsed().as_secs_f32())
+                        .round() as u64;
+                        shared_state.0 = Instant::now();
+                        shared_state.1 = 0;
+                        Some(downloaded_bytes_per_sec)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            });
+            };
             // If speed is "available", update UI
             if let Some(downloaded_bytes_per_sec) = downloaded_bytes_per_sec {
                 block_on(async {
-                    let patch_number = async { *patch_number_callback.lock().await }.await;
                     ui_controller
                         .dispatch_patching_status(PatchingStatus::DownloadInProgress(
-                            patch_number,
+                            shared_patch_number_ref.load(Ordering::SeqCst),
                             patch_count,
                             downloaded_bytes_per_sec,
                         ))
-                        .await
+                        .await;
                 });
             }
             last_downloaded_bytes = dl_now;
@@ -283,11 +287,8 @@ where
         }
 
         // Update status
-        {
-            // Take the lock and update the current value
-            let mut patch_number = patch_number.lock().await;
-            *patch_number += 1;
-        }
+        shared_patch_number_ref.fetch_add(1, Ordering::SeqCst);
+
         // File's been downloaded, add it to the queue
         Ok(PendingPatch {
             info: patch_info,
