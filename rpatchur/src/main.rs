@@ -10,9 +10,9 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{App, Arg};
-use patcher::{patcher_thread_routine, retrieve_patcher_configuration, PatcherCommand};
+use patcher::{patcher_thread_routine, retrieve_patcher_configuration};
 use simple_logger::SimpleLogger;
-use tokio::{runtime, sync::mpsc};
+use tokio::runtime;
 use ui::{UIController, WebViewUserData};
 
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -47,7 +47,7 @@ fn main() {
             .expect("Specified working directory is invalid or inaccessible");
     };
 
-    let mut tokio_rt = build_tokio_runtime().expect("Failed to build a tokio runtime");
+    let tokio_rt = build_tokio_runtime().expect("Failed to build a tokio runtime");
     let config = match retrieve_patcher_configuration(None) {
         Err(e) => {
             let err_msg = "Failed to retrieve the patcher's configuration";
@@ -58,7 +58,7 @@ fn main() {
         Ok(v) => v,
     };
     // Create a channel to allow the webview's thread to communicate with the patching thread
-    let (tx, rx) = mpsc::channel::<PatcherCommand>(8);
+    let (tx, rx) = flume::bounded(8);
     let webview = ui::build_webview(WINDOW_TITLE, WebViewUserData::new(config.clone(), tx))
         .expect("Failed to build a web view");
     let patching_task = tokio_rt.spawn(patcher_thread_routine(

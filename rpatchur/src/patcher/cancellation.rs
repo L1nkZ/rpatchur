@@ -1,5 +1,4 @@
 use super::PatcherCommand;
-use tokio::sync::mpsc;
 
 pub type InterruptibleFnResult<T> = std::result::Result<T, InterruptibleFnError>;
 
@@ -9,9 +8,9 @@ pub enum InterruptibleFnError {
 }
 
 pub async fn wait_for_cancellation(
-    patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
+    patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) -> InterruptibleFnError {
-    if let Some(cmd) = patching_thread_rx.recv().await {
+    if let Ok(cmd) = patching_thread_rx.recv_async().await {
         match cmd {
             PatcherCommand::Cancel => InterruptibleFnError::Interrupted,
             _ => InterruptibleFnError::Err("Unexpected command received".to_string()),
@@ -22,9 +21,9 @@ pub async fn wait_for_cancellation(
 }
 
 pub fn check_for_cancellation(
-    patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
+    patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) -> Option<InterruptibleFnError> {
-    if let Ok(cmd) = patching_thread_rx.poll_recv() {
+    if let Ok(cmd) = patching_thread_rx.try_recv() {
         match cmd {
             PatcherCommand::Cancel => Some(InterruptibleFnError::Interrupted),
             _ => None,

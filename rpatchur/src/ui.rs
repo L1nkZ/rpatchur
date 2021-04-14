@@ -4,10 +4,8 @@ use std::path::PathBuf;
 
 use crate::patcher::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::process::start_executable;
-use futures::executor::block_on;
 use serde::Deserialize;
 use serde_json::Value;
-use tokio::sync::mpsc;
 use web_view::{Content, Handle, WebView};
 
 /// 'Opaque" struct that can be used to update the UI.
@@ -61,12 +59,12 @@ pub enum PatchingStatus {
 
 pub struct WebViewUserData {
     patcher_config: PatcherConfiguration,
-    patching_thread_tx: mpsc::Sender<PatcherCommand>,
+    patching_thread_tx: flume::Sender<PatcherCommand>,
 }
 impl WebViewUserData {
     pub fn new(
         patcher_config: PatcherConfiguration,
-        patching_thread_tx: mpsc::Sender<PatcherCommand>,
+        patching_thread_tx: flume::Sender<PatcherCommand>,
     ) -> WebViewUserData {
         WebViewUserData {
             patcher_config,
@@ -177,13 +175,11 @@ fn handle_exit(webview: &mut WebView<WebViewUserData>) {
 
 /// Starts the patching task/thread.
 fn handle_start_update(webview: &mut WebView<WebViewUserData>) {
-    if block_on(
-        webview
-            .user_data_mut()
-            .patching_thread_tx
-            .send(PatcherCommand::Start),
-    )
-    .is_ok()
+    if webview
+        .user_data_mut()
+        .patching_thread_tx
+        .send(PatcherCommand::Start)
+        .is_ok()
     {
         log::trace!("Sent start command to patching thread");
     }
@@ -191,13 +187,11 @@ fn handle_start_update(webview: &mut WebView<WebViewUserData>) {
 
 /// Cancels the patching task/thread.
 fn handle_cancel_update(webview: &mut WebView<WebViewUserData>) {
-    if block_on(
-        webview
-            .user_data_mut()
-            .patching_thread_tx
-            .send(PatcherCommand::Cancel),
-    )
-    .is_ok()
+    if webview
+        .user_data_mut()
+        .patching_thread_tx
+        .send(PatcherCommand::Cancel)
+        .is_ok()
     {
         log::trace!("Sent cancel command to patching thread");
     }

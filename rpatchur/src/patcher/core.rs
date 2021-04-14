@@ -16,8 +16,8 @@ use futures::stream::{StreamExt, TryStreamExt};
 use gruf::thor::{self, ThorArchive, ThorPatchInfo, ThorPatchList};
 use gruf::GrufError;
 use tokio::fs::File;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::{mpsc, Mutex};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::sync::Mutex;
 use url::Url;
 
 /// Representation of a pending patch (a patch that's been downloaded but has
@@ -35,7 +35,7 @@ struct PendingPatch {
 pub async fn patcher_thread_routine(
     ui_controller: UIController,
     config: PatcherConfiguration,
-    mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
+    mut patcher_thread_rx: flume::Receiver<PatcherCommand>,
 ) {
     log::trace!("Patching thread started.");
     log::trace!("Waiting for start command");
@@ -55,12 +55,9 @@ pub async fn patcher_thread_routine(
 
 /// Returns when a start command is received, ignoring all other commands that might be received.
 /// Returns an error if the other end of the channel happens to be closed while waiting.
-async fn wait_for_start_command(rx: &mut mpsc::Receiver<PatcherCommand>) -> Result<()> {
+async fn wait_for_start_command(rx: &mut flume::Receiver<PatcherCommand>) -> Result<()> {
     loop {
-        let cmd = rx
-            .recv()
-            .await
-            .ok_or_else(|| anyhow!("Channel has been closed"))?;
+        let cmd = rx.recv_async().await?;
         if let PatcherCommand::Start = cmd {
             break;
         }
@@ -75,7 +72,7 @@ async fn wait_for_start_command(rx: &mut mpsc::Receiver<PatcherCommand>) -> Resu
 async fn interruptible_patcher_routine(
     ui_controller: &UIController,
     config: PatcherConfiguration,
-    mut patcher_thread_rx: mpsc::Receiver<PatcherCommand>,
+    mut patcher_thread_rx: flume::Receiver<PatcherCommand>,
 ) -> Result<()> {
     log::info!("Patching started");
     let patch_list_url = Url::parse(config.web.plist_url.as_str())?;
@@ -173,7 +170,7 @@ async fn download_patches_concurrent<P>(
     download_directory: P,
     ensure_integrity: bool,
     ui_controller: &UIController,
-    patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
+    patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) -> InterruptibleFnResult<Vec<PendingPatch>>
 where
     P: AsRef<Path>,
@@ -374,7 +371,7 @@ async fn apply_patches<P: AsRef<Path>>(
     config: &PatcherConfiguration,
     cache_file_path: P,
     ui_controller: &UIController,
-    patching_thread_rx: &mut mpsc::Receiver<PatcherCommand>,
+    patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) -> InterruptibleFnResult<()> {
     let current_working_dir = env::current_dir().map_err(|e| {
         InterruptibleFnError::Err(format!(
