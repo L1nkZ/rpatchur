@@ -57,7 +57,7 @@ $ cd rpatchur
 $ cargo build --release
 ```
 
-Note: Rust 1.42 or later is required.
+Note: Rust 1.49 or later is required.
 
 ### Cross Compilation
 
