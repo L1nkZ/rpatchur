@@ -32,6 +32,9 @@ pack() {
     cp "target/$TARGET/release/mkpatch" "$tempdir/$package_name/"
     strip "$tempdir/$package_name/mkpatch"
 
+    # examples
+    cp -r examples "$tempdir/$package_name/"
+
     # readme and license
     cp README.md "$tempdir/$package_name"
     cp LICENSE-MIT "$tempdir/$package_name"
