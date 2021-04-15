@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.2.3] - 2021-04-15
+### Changed
+- Migrate to tokio 1.5
+- Update dependencies
+
+### Fixed
+- Fix deadlock that could happen when canceling downloads early at launch
+
 ## [0.2.2] - 2021-03-14
 ### Changed
 - Allow launching game clients and setup executables that do not have a `.exe`
