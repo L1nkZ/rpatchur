@@ -12,7 +12,7 @@ use super::cancellation::{
 };
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
-use crate::ui::{PatchingStatus, UIController};
+use crate::ui::{PatchingStatus, UiController};
 use anyhow::{anyhow, Context, Result};
 use futures::executor::block_on;
 use futures::stream::{StreamExt, TryStreamExt};
@@ -35,7 +35,7 @@ struct PendingPatch {
 /// This waits for a `PatcherCommand::Start` command before starting an
 /// interruptible patching task.
 pub async fn patcher_thread_routine(
-    ui_controller: UIController,
+    ui_controller: UiController,
     config: PatcherConfiguration,
     mut patcher_thread_rx: flume::Receiver<PatcherCommand>,
 ) {
@@ -72,7 +72,7 @@ async fn wait_for_start_command(rx: &mut flume::Receiver<PatcherCommand>) -> Res
 /// This routine is written in a way that makes it interuptible (or cancellable)
 /// with a relatively low latency.
 async fn interruptible_patcher_routine(
-    ui_controller: &UIController,
+    ui_controller: &UiController,
     config: PatcherConfiguration,
     mut patcher_thread_rx: flume::Receiver<PatcherCommand>,
 ) -> Result<()> {
@@ -166,17 +166,14 @@ fn get_cache_file_path() -> Result<PathBuf> {
 /// contained in the 'patch_url' argument.
 ///
 /// This function is interruptible.
-async fn download_patches_concurrent<P>(
+async fn download_patches_concurrent(
     patch_url: Url,
     patch_list: ThorPatchList,
-    download_directory: P,
+    download_directory: impl AsRef<Path>,
     ensure_integrity: bool,
-    ui_controller: &UIController,
+    ui_controller: &UiController,
     patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
-) -> InterruptibleFnResult<Vec<PendingPatch>>
-where
-    P: AsRef<Path>,
-{
+) -> InterruptibleFnResult<Vec<PendingPatch>> {
     let patch_count = patch_list.len();
     ui_controller
         .dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count, 0))
@@ -196,16 +193,13 @@ where
 /// Actual implementation of the concurrent file download
 ///
 /// Returns an unordered vector of `PendingPatch`.
-async fn download_patches_concurrent_inner<P>(
+async fn download_patches_concurrent_inner(
     patch_url: Url,
     patch_list: ThorPatchList,
-    download_directory: P,
+    download_directory: impl AsRef<Path>,
     ensure_integrity: bool,
-    ui_controller: &UIController,
-) -> Result<Vec<PendingPatch>>
-where
-    P: AsRef<Path>,
-{
+    ui_controller: &UiController,
+) -> Result<Vec<PendingPatch>> {
     const CONCURRENT_DOWNLOADS: usize = 32;
     // Shared reqwest client
     let client = reqwest::Client::new();
@@ -300,7 +294,7 @@ where
     .await
 }
 
-fn is_archive_valid<P: AsRef<Path>>(archive_path: P) -> Result<bool> {
+fn is_archive_valid(archive_path: impl AsRef<Path>) -> Result<bool> {
     let mut archive = ThorArchive::open(archive_path.as_ref()).context("Failed to open archive")?;
     match archive.is_valid() {
         Err(e) => {
@@ -367,11 +361,11 @@ async fn download_patch_to_file<CB: FnMut(u64, u64)>(
 /// files.
 ///
 /// This function is interruptible.
-async fn apply_patches<P: AsRef<Path>>(
+async fn apply_patches(
     pending_patch_queue: Vec<PendingPatch>,
     config: &PatcherConfiguration,
-    cache_file_path: P,
-    ui_controller: &UIController,
+    cache_file_path: impl AsRef<Path>,
+    ui_controller: &UiController,
     patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) -> InterruptibleFnResult<()> {
     let current_working_dir = env::current_dir().map_err(|e| {

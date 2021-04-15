@@ -67,8 +67,8 @@ pub fn retrieve_patcher_configuration(
     parse_configuration(config_file_path)
 }
 
-fn parse_configuration<P: AsRef<Path>>(config_file_path: P) -> Result<PatcherConfiguration> {
+fn parse_configuration(config_file_path: impl AsRef<Path>) -> Result<PatcherConfiguration> {
     let config_file = File::open(config_file_path)?;
     let config_reader = BufReader::new(config_file);
-    Ok(serde_yaml::from_reader(config_reader).context("Invalid configuration")?)
+    serde_yaml::from_reader(config_reader).context("Invalid configuration")
 }

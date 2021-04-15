@@ -34,10 +34,10 @@ struct MergeEntry {
 }
 
 /// Patches a GRF file with a THOR archive/patch.
-pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
+pub fn apply_patch_to_grf<R: Read + Seek>(
     patching_method: GrfPatchingMethod,
     create_if_needed: bool,
-    grf_file_path: P,
+    grf_file_path: impl AsRef<Path>,
     thor_archive: &mut ThorArchive<R>,
 ) -> Result<()> {
     if !grf_file_path.as_ref().exists() && create_if_needed {
@@ -55,8 +55,8 @@ pub fn apply_patch_to_grf<P: AsRef<Path>, R: Read + Seek>(
 ///
 /// This is faster but produces output of bigger size and can corrupt file in
 /// case of error.
-fn apply_patch_to_grf_ip<P: AsRef<Path>, R: Read + Seek>(
-    grf_file_path: P,
+fn apply_patch_to_grf_ip<R: Read + Seek>(
+    grf_file_path: impl AsRef<Path>,
     thor_archive: &mut ThorArchive<R>,
 ) -> Result<()> {
     let mut builder = GrfArchiveBuilder::open(grf_file_path)?;
@@ -79,8 +79,8 @@ fn apply_patch_to_grf_ip<P: AsRef<Path>, R: Read + Seek>(
 /// Patches a GRF in an out-of-place manner.
 ///
 /// This is safer and produces output of smaller size but slower.
-fn apply_patch_to_grf_oop<P: AsRef<Path>, R: Read + Seek>(
-    grf_file_path: P,
+fn apply_patch_to_grf_oop<R: Read + Seek>(
+    grf_file_path: impl AsRef<Path>,
     thor_archive: &mut ThorArchive<R>,
 ) -> Result<()> {
     // Rename file to back it up
@@ -144,8 +144,8 @@ fn apply_patch_to_grf_oop<P: AsRef<Path>, R: Read + Seek>(
 
 /// Patches files located in the game client's directory with a THOR
 /// archive/patch.
-pub fn apply_patch_to_disk<P: AsRef<Path>, R: Read + Seek>(
-    root_directory: P,
+pub fn apply_patch_to_disk<R: Read + Seek>(
+    root_directory: impl AsRef<Path>,
     thor_archive: &mut ThorArchive<R>,
 ) -> Result<()> {
     // TODO(LinkZ): Save original files before updating/removing them in order

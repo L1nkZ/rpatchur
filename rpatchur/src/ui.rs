@@ -9,12 +9,12 @@ use serde_json::Value;
 use web_view::{Content, Handle, WebView};
 
 /// 'Opaque" struct that can be used to update the UI.
-pub struct UIController {
+pub struct UiController {
     web_view_handle: Handle<WebViewUserData>,
 }
-impl UIController {
-    pub fn new(web_view: &WebView<'_, WebViewUserData>) -> UIController {
-        UIController {
+impl UiController {
+    pub fn new(web_view: &WebView<'_, WebViewUserData>) -> UiController {
+        UiController {
             web_view_handle: web_view.handle(),
         }
     }
@@ -82,11 +82,7 @@ impl Drop for WebViewUserData {
 /// Creates a message box with the given title and message.
 ///
 /// Panics in case of error.
-pub fn msg_box<S1, S2>(title: S1, message: S2)
-where
-    S1: AsRef<str>,
-    S2: AsRef<str>,
-{
+pub fn msg_box(title: impl AsRef<str>, message: impl AsRef<str>) {
     // Note(LinkZ): Empirical approximation of the required height for the window.
     // TODO: Improve
     let height = 63 + (message.as_ref().len() / 40) * 14;

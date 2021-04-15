@@ -13,7 +13,7 @@ use clap::{App, Arg};
 use patcher::{patcher_thread_routine, retrieve_patcher_configuration};
 use simple_logger::SimpleLogger;
 use tokio::runtime;
-use ui::{UIController, WebViewUserData};
+use ui::{UiController, WebViewUserData};
 
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -62,7 +62,7 @@ fn main() {
     let webview = ui::build_webview(WINDOW_TITLE, WebViewUserData::new(config.clone(), tx))
         .expect("Failed to build a web view");
     let patching_task = tokio_rt.spawn(patcher_thread_routine(
-        UIController::new(&webview),
+        UiController::new(&webview),
         config,
         rx,
     ));

@@ -21,7 +21,7 @@ pub struct PatchEntry {
     pub is_removed: bool,
 }
 
-pub fn parse_patch_definition<P: AsRef<Path>>(file_path: P) -> Result<PatchDefinition> {
+pub fn parse_patch_definition(file_path: impl AsRef<Path>) -> Result<PatchDefinition> {
     let file = File::open(file_path)?;
     let file_reader = BufReader::new(file);
     let patch_definition = serde_yaml::from_reader(file_reader).context("Invalid configuration")?;
