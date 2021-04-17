@@ -1,10 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Serialize cache file as JSON
 
 ## [0.2.3] - 2021-04-15
 ### Changed
-- Migrate to tokio 1.5
+- Migrate to `tokio` v1.5
 - Update dependencies
 
 ### Fixed
