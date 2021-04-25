@@ -9,9 +9,9 @@ use std::env;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use clap::{App, Arg};
 use patcher::{patcher_thread_routine, retrieve_patcher_configuration};
 use simple_logger::SimpleLogger;
+use structopt::StructOpt;
 use tinyfiledialogs as tfd;
 use tokio::runtime;
 use ui::{UiController, WebViewUserData};
@@ -22,6 +22,14 @@ const PKG_AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 const PKG_DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 const WINDOW_TITLE: &str = "RPatchur";
 
+#[derive(Debug, StructOpt)]
+#[structopt(name = PKG_NAME, version = PKG_VERSION, author = PKG_AUTHORS, about = PKG_DESCRIPTION)]
+struct Opt {
+    /// Sets a custom working directory
+    #[structopt(short, long, parse(from_os_str))]
+    working_directory: Option<PathBuf>,
+}
+
 fn main() -> Result<()> {
     SimpleLogger::new()
         .with_level(LevelFilter::Off)
@@ -30,21 +38,9 @@ fn main() -> Result<()> {
         .with_context(|| "Failed to initalize the logger")?;
 
     // Parse CLI arguments
-    let matches = App::new(PKG_NAME)
-        .version(PKG_VERSION)
-        .author(PKG_AUTHORS)
-        .about(PKG_DESCRIPTION)
-        .arg(
-            Arg::with_name("working-directory")
-                .short("w")
-                .long("working-directory")
-                .value_name("GAME_DIRECTORY")
-                .help("Sets a custom working directory")
-                .takes_value(true),
-        )
-        .get_matches();
-    if let Some(working_directory) = matches.value_of("working-directory") {
-        env::set_current_dir(PathBuf::from(working_directory))
+    let cli_args = Opt::from_args();
+    if let Some(working_directory) = cli_args.working_directory {
+        env::set_current_dir(working_directory)
             .with_context(|| "Specified working directory is invalid or inaccessible")?;
     };
 

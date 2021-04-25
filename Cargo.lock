@@ -1461,7 +1461,6 @@ name = "rpatchur"
 version = "0.2.3"
 dependencies = [
  "anyhow",
- "clap",
  "flume",
  "futures",
  "gruf",
@@ -1472,6 +1471,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "simple_logger",
+ "structopt",
  "tempfile",
  "tinyfiledialogs",
  "tokio 1.5.0",
