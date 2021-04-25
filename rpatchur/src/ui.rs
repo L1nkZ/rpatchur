@@ -5,6 +5,7 @@ use crate::patcher::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::process::start_executable;
 use serde::Deserialize;
 use serde_json::Value;
+use tinyfiledialogs as tfd;
 use web_view::{Content, Handle, WebView};
 
 /// 'Opaque" struct that can be used to update the UI.
@@ -21,7 +22,7 @@ impl UiController {
     /// Allows another thread to indicate the current status of the patching process.
     ///
     /// This updates the UI with useful information.
-    pub async fn dispatch_patching_status(&self, status: PatchingStatus) {
+    pub fn dispatch_patching_status(&self, status: PatchingStatus) {
         if let Err(e) = self.web_view_handle.dispatch(move |webview| {
             let result = match status {
                 PatchingStatus::Ready => webview.eval("patchingStatusReady()"),
@@ -37,10 +38,22 @@ impl UiController {
                 PatchingStatus::InstallationInProgress(nb_installed, nb_total) => webview.eval(
                     &format!("patchingStatusInstalling({}, {})", nb_installed, nb_total),
                 ),
+                PatchingStatus::ManualPatchApplied(name) => {
+                    webview.eval(&format!("patchingStatusPatchApplied(\"{}\")", name))
+                }
             };
             if let Err(e) = result {
                 log::warn!("Failed to dispatch patching status: {}.", e);
             }
+            Ok(())
+        }) {
+            log::warn!("Failed to dispatch patching status: {}.", e);
+        }
+    }
+
+    pub fn set_patch_in_progress(&self, value: bool) {
+        if let Err(e) = self.web_view_handle.dispatch(move |webview| {
+            webview.user_data_mut().patching_in_progress = value;
             Ok(())
         }) {
             log::warn!("Failed to dispatch patching status: {}.", e);
@@ -54,11 +67,13 @@ pub enum PatchingStatus {
     Error(String),                         // Error message
     DownloadInProgress(usize, usize, u64), // Downloaded files, Total number, Bytes per second
     InstallationInProgress(usize, usize),  // Installed patches, Total number
+    ManualPatchApplied(String),            // Patch file name
 }
 
 pub struct WebViewUserData {
     patcher_config: PatcherConfiguration,
     patching_thread_tx: flume::Sender<PatcherCommand>,
+    patching_in_progress: bool,
 }
 impl WebViewUserData {
     pub fn new(
@@ -68,13 +83,14 @@ impl WebViewUserData {
         WebViewUserData {
             patcher_config,
             patching_thread_tx,
+            patching_in_progress: false,
         }
     }
 }
 impl Drop for WebViewUserData {
     fn drop(&mut self) {
         // Ask the patching thread to stop whenever WebViewUserData is dropped
-        let _res = self.patching_thread_tx.try_send(PatcherCommand::Cancel);
+        let _res = self.patching_thread_tx.try_send(PatcherCommand::Quit);
     }
 }
 
@@ -100,6 +116,7 @@ pub fn build_webview(
                 "start_update" => handle_start_update(webview),
                 "cancel_update" => handle_cancel_update(webview),
                 "reset_cache" => handle_reset_cache(webview),
+                "manual_patch" => handle_manual_patch(webview),
                 request => handle_json_request(webview, request),
             }
             Ok(())
@@ -149,13 +166,21 @@ fn handle_exit(webview: &mut WebView<WebViewUserData>) {
 
 /// Starts the patching task/thread.
 fn handle_start_update(webview: &mut WebView<WebViewUserData>) {
-    if webview
+    // Patching is already in progress, abort.
+    if webview.user_data().patching_in_progress {
+        let res = webview.eval("notificationInProgress()");
+        if let Err(e) = res {
+            log::warn!("Failed to dispatch notification: {}.", e);
+        }
+        return;
+    }
+
+    let send_res = webview
         .user_data_mut()
         .patching_thread_tx
-        .send(PatcherCommand::Start)
-        .is_ok()
-    {
-        log::trace!("Sent start command to patching thread");
+        .send(PatcherCommand::StartUpdate);
+    if send_res.is_ok() {
+        log::trace!("Sent StartUpdate command to patching thread");
     }
 }
 
@@ -164,10 +189,10 @@ fn handle_cancel_update(webview: &mut WebView<WebViewUserData>) {
     if webview
         .user_data_mut()
         .patching_thread_tx
-        .send(PatcherCommand::Cancel)
+        .send(PatcherCommand::CancelUpdate)
         .is_ok()
     {
-        log::trace!("Sent cancel command to patching thread");
+        log::trace!("Sent CancelUpdate command to patching thread");
     }
 }
 
@@ -178,6 +203,35 @@ fn handle_reset_cache(_webview: &mut WebView<WebViewUserData>) {
         let cache_file_path = PathBuf::from(patcher_name).with_extension("dat");
         if let Err(e) = fs::remove_file(cache_file_path) {
             log::warn!("Failed to remove the cache file: {}", e);
+        }
+    }
+}
+
+/// Asks the user to provide a patch file to apply
+fn handle_manual_patch(webview: &mut WebView<WebViewUserData>) {
+    // Patching is already in progress, abort.
+    if webview.user_data().patching_in_progress {
+        let res = webview.eval("notificationInProgress()");
+        if let Err(e) = res {
+            log::warn!("Failed to dispatch notification: {}.", e);
+        }
+        return;
+    }
+
+    let opt_path = tfd::open_file_dialog(
+        "Select a file",
+        "",
+        Some((&["*.thor"], "Patch Files (*.thor)")),
+    );
+    if let Some(path) = opt_path {
+        log::info!("Requesting manual patch '{}'", path);
+        if webview
+            .user_data_mut()
+            .patching_thread_tx
+            .send(PatcherCommand::ApplyPatch(PathBuf::from(path)))
+            .is_ok()
+        {
+            log::trace!("Sent ApplyPatch command to patching thread");
         }
     }
 }

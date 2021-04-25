@@ -61,7 +61,7 @@ fn main() -> Result<()> {
     };
 
     // Create a channel to allow the webview's thread to communicate with the patching thread
-    let (tx, rx) = flume::bounded(8);
+    let (tx, rx) = flume::bounded(32);
     let webview = ui::build_webview(WINDOW_TITLE, WebViewUserData::new(config.clone(), tx))
         .with_context(|| "Failed to build a web view")?;
 

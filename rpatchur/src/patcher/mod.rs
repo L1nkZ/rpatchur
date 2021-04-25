@@ -6,14 +6,17 @@ mod patching;
 
 use std::env;
 use std::ffi::OsString;
+use std::path::PathBuf;
 
 pub use self::config::{retrieve_patcher_configuration, PatcherConfiguration};
 pub use self::core::patcher_thread_routine;
 use anyhow::{Context, Result};
 
 pub enum PatcherCommand {
-    Start,
-    Cancel, // Canceled by the user
+    StartUpdate,
+    CancelUpdate,        // Canceled by the user
+    ApplyPatch(PathBuf), // Manual patch submitted by the user
+    Quit,                // Exit requested
 }
 
 pub fn get_patcher_name() -> Result<OsString> {

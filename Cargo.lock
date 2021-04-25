@@ -1467,6 +1467,7 @@ dependencies = [
  "httptest",
  "log",
  "reqwest",
+ "scopeguard",
  "serde",
  "serde_json",
  "serde_yaml",

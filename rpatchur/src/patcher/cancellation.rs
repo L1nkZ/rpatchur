@@ -12,7 +12,9 @@ pub async fn wait_for_cancellation(
 ) -> InterruptibleFnError {
     if let Ok(cmd) = patching_thread_rx.recv_async().await {
         match cmd {
-            PatcherCommand::Cancel => InterruptibleFnError::Interrupted,
+            PatcherCommand::CancelUpdate | PatcherCommand::Quit => {
+                InterruptibleFnError::Interrupted
+            }
             _ => InterruptibleFnError::Err("Unexpected command received".to_string()),
         }
     } else {
@@ -20,15 +22,21 @@ pub async fn wait_for_cancellation(
     }
 }
 
-pub fn check_for_cancellation(
+pub fn process_incoming_commands(
     patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
-) -> Option<InterruptibleFnError> {
-    if let Ok(cmd) = patching_thread_rx.try_recv() {
-        match cmd {
-            PatcherCommand::Cancel => Some(InterruptibleFnError::Interrupted),
-            _ => None,
-        }
-    } else {
-        None
+) -> InterruptibleFnResult<()> {
+    match patching_thread_rx.try_recv() {
+        Ok(cmd) => match cmd {
+            PatcherCommand::CancelUpdate | PatcherCommand::Quit => {
+                Err(InterruptibleFnError::Interrupted)
+            }
+            _ => Ok(()),
+        },
+        Err(e) => match e {
+            flume::TryRecvError::Disconnected => {
+                Err(InterruptibleFnError::Err("Channel was closed".to_string()))
+            }
+            flume::TryRecvError::Empty => Ok(()),
+        },
     }
 }

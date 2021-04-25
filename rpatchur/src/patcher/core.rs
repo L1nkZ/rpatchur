@@ -6,13 +6,6 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-use super::cache::{read_cache_file, write_cache_file, PatcherCache};
-use super::cancellation::{
-    check_for_cancellation, wait_for_cancellation, InterruptibleFnError, InterruptibleFnResult,
-};
-use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
-use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
-use crate::ui::{PatchingStatus, UiController};
 use anyhow::{anyhow, Context, Result};
 use futures::executor::block_on;
 use futures::stream::{StreamExt, TryStreamExt};
@@ -21,6 +14,14 @@ use gruf::GrufError;
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use url::Url;
+
+use super::cache::{read_cache_file, write_cache_file, PatcherCache};
+use super::cancellation::{
+    process_incoming_commands, wait_for_cancellation, InterruptibleFnError, InterruptibleFnResult,
+};
+use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
+use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
+use crate::ui::{PatchingStatus, UiController};
 
 /// Representation of a pending patch (a patch that's been downloaded but has
 /// not been applied yet).
@@ -39,52 +40,119 @@ pub async fn patcher_thread_routine(
     config: PatcherConfiguration,
     mut patcher_thread_rx: flume::Receiver<PatcherCommand>,
 ) {
-    log::trace!("Patching thread started.");
-    log::trace!("Waiting for start command");
-    if let Err(e) = wait_for_start_command(&mut patcher_thread_rx).await {
-        log::error!("Failed to wait for start command: {}", e);
-        return;
-    }
-
-    if let Err(err) = interruptible_patcher_routine(&ui_controller, config, patcher_thread_rx).await
-    {
-        log::error!("{:#}", err);
-        ui_controller
-            .dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)))
-            .await;
+    log::trace!("Patching thread started. Waiting for commands ...");
+    let rx = &mut patcher_thread_rx;
+    let config = &config;
+    loop {
+        let cmd = rx.recv_async().await;
+        match cmd {
+            Err(e) => {
+                log::error!("Failed to read from channel: {}", e);
+                return;
+            }
+            Ok(cmd) => match cmd {
+                PatcherCommand::Quit => break,
+                PatcherCommand::StartUpdate => {
+                    start_update(&ui_controller, config, rx).await;
+                }
+                PatcherCommand::ApplyPatch(patch_file_path) => {
+                    apply_single_patch(patch_file_path, &ui_controller, config);
+                }
+                _ => {}
+            },
+        }
     }
 }
 
-/// Returns when a start command is received, ignoring all other commands that might be received.
-/// Returns an error if the other end of the channel happens to be closed while waiting.
-async fn wait_for_start_command(rx: &mut flume::Receiver<PatcherCommand>) -> Result<()> {
-    loop {
-        let cmd = rx.recv_async().await?;
-        if let PatcherCommand::Start = cmd {
-            break;
+/// Starts the automatic update process (download + patching)
+async fn start_update(
+    ui_controller: &UiController,
+    config: &PatcherConfiguration,
+    patcher_thread_rx: &mut flume::Receiver<PatcherCommand>,
+) {
+    // Tell the UI that we're currently working
+    ui_controller.set_patch_in_progress(true);
+    let _guard = scopeguard::guard((), |_| {
+        ui_controller.set_patch_in_progress(false);
+    });
+
+    let res = interruptible_update_routine(ui_controller, config, patcher_thread_rx).await;
+    match res {
+        Err(err) => {
+            log::error!("{:#}", err);
+            ui_controller.dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)));
+        }
+        Ok(()) => {
+            ui_controller.dispatch_patching_status(PatchingStatus::Ready);
+            log::info!("Patching finished!");
         }
     }
-    Ok(())
+}
+
+/// Applies a manual patch given by the user
+fn apply_single_patch(
+    patch_file_path: impl AsRef<Path>,
+    ui_controller: &UiController,
+    config: &PatcherConfiguration,
+) {
+    // Tell the UI that we're currently working
+    ui_controller.set_patch_in_progress(true);
+    let _guard = scopeguard::guard((), |_| {
+        ui_controller.set_patch_in_progress(false);
+    });
+
+    let current_working_dir = env::current_dir();
+    match current_working_dir {
+        Err(err) => {
+            log::error!("Failed to resolve current working directory: {}.", err);
+            ui_controller.dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)));
+        }
+        Ok(current_working_dir) => {
+            let patch_file_name = patch_file_path
+                .as_ref()
+                .file_name()
+                .unwrap_or_default()
+                .to_str()
+                .unwrap_or_default()
+                .to_string();
+            log::info!("Applying patch '{}'", patch_file_name);
+            let res = apply_patch(patch_file_path, config, current_working_dir);
+            match res {
+                Err(err) => {
+                    log::error!("{:#}", err);
+                    ui_controller
+                        .dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)));
+                }
+                Ok(()) => {
+                    log::info!("Done");
+                    ui_controller.dispatch_patching_status(PatchingStatus::ManualPatchApplied(
+                        patch_file_name,
+                    ));
+                }
+            }
+        }
+    }
 }
 
 /// Main routine of the patching task.
 ///
 /// This routine is written in a way that makes it interuptible (or cancellable)
 /// with a relatively low latency.
-async fn interruptible_patcher_routine(
+async fn interruptible_update_routine(
     ui_controller: &UiController,
-    config: PatcherConfiguration,
-    mut patcher_thread_rx: flume::Receiver<PatcherCommand>,
+    config: &PatcherConfiguration,
+    patcher_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) -> Result<()> {
     log::info!("Patching started");
     let patch_list_url = Url::parse(config.web.plist_url.as_str())?;
     let mut patch_list = fetch_patch_list(patch_list_url)
         .await
-        .context("Failed to retrieve the patch list")?;
+        .with_context(|| "Failed to retrieve the patch list")?;
     log::info!("Successfully fetched patch list: {:?}", patch_list);
 
     // Try to read cache
-    let cache_file_path = get_cache_file_path().context("Failed to resolve patcher name")?;
+    let cache_file_path =
+        get_cache_file_path().with_context(|| "Failed to resolve patcher name")?;
     if let Ok(patcher_cache) = read_cache_file(&cache_file_path).await {
         // Ignore already applied patches if needed
         // First we verify that our cached index looks relevant
@@ -99,15 +167,15 @@ async fn interruptible_patcher_routine(
     // Try fetching patch files
     log::info!("Downloading patches... ");
     let patch_url =
-        Url::parse(config.web.patch_url.as_str()).context("Failed to parse 'patch_url'")?;
-    let tmp_dir = tempfile::tempdir().context("Failed to create temporary directory")?;
+        Url::parse(config.web.patch_url.as_str()).with_context(|| "Failed to parse 'patch_url'")?;
+    let tmp_dir = tempfile::tempdir().with_context(|| "Failed to create temporary directory")?;
     let pending_patch_queue = download_patches_concurrent(
         patch_url,
         patch_list,
         tmp_dir.path(),
         config.patching.check_integrity,
         &ui_controller,
-        &mut patcher_thread_rx,
+        patcher_thread_rx,
     )
     .await
     .map_err(|e| match e {
@@ -120,10 +188,10 @@ async fn interruptible_patcher_routine(
     log::info!("Applying patches...");
     apply_patches(
         pending_patch_queue,
-        &config,
+        config,
         &cache_file_path,
         &ui_controller,
-        &mut patcher_thread_rx,
+        patcher_thread_rx,
     )
     .await
     .map_err(|e| match e {
@@ -131,10 +199,7 @@ async fn interruptible_patcher_routine(
         InterruptibleFnError::Interrupted => anyhow!("Patching was canceled"),
     })?;
     log::info!("Done");
-    ui_controller
-        .dispatch_patching_status(PatchingStatus::Ready)
-        .await;
-    log::info!("Patching finished!");
+
     Ok(())
 }
 
@@ -145,11 +210,11 @@ async fn interruptible_patcher_routine(
 async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList> {
     let resp = reqwest::get(patch_list_url)
         .await
-        .context("Failed to GET URL")?;
+        .with_context(|| "Failed to GET URL")?;
     if !resp.status().is_success() {
         return Err(anyhow!("Patch list file not found on the remote server"));
     }
-    let patch_index_content = resp.text().await.context("Invalid responde body")?;
+    let patch_index_content = resp.text().await.with_context(|| "Invalid responde body")?;
     log::info!("Parsing patch index...");
     Ok(thor::patch_list_from_string(patch_index_content.as_str()))
 }
@@ -175,9 +240,7 @@ async fn download_patches_concurrent(
     patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) -> InterruptibleFnResult<Vec<PendingPatch>> {
     let patch_count = patch_list.len();
-    ui_controller
-        .dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count, 0))
-        .await;
+    ui_controller.dispatch_patching_status(PatchingStatus::DownloadInProgress(0, patch_count, 0));
     // Download files in a cancelable manner
     let mut vec = tokio::select! {
         cancel_res = wait_for_cancellation(patching_thread_rx) => return Err(cancel_res),
@@ -201,13 +264,13 @@ async fn download_patches_concurrent_inner(
     ui_controller: &UiController,
 ) -> Result<Vec<PendingPatch>> {
     const CONCURRENT_DOWNLOADS: usize = 32;
+    const ONE_SECOND: Duration = Duration::from_secs(1);
     // Shared reqwest client
     let client = reqwest::Client::new();
     // Shared value that contains the number of downloaded patches
     let shared_patch_number = AtomicUsize::new(0_usize);
     // Shared tuple that's used to compute the download speed
     let shared_progress_state = Arc::new(std::sync::Mutex::new((Instant::now(), 0_u64)));
-    let one_second = Duration::from_secs(1);
 
     // Collect stream of "PendingPatch" concurrently with an unordered_buffer
     let patch_count = patch_list.len();
@@ -215,13 +278,14 @@ async fn download_patches_concurrent_inner(
         let client = &client;
         let patch_file_url = patch_url
             .join(patch_info.file_name.as_str())
-            .context("Failed to generate URL for patch file")?;
+            .with_context(|| "Failed to generate URL for patch file")?;
         let local_file_path = download_directory
             .as_ref()
             .join(patch_info.file_name.as_str());
         let mut tmp_file = File::create(&local_file_path)
             .await
-            .context("Failed to create temporary file")?;
+            .with_context(|| "Failed to create temporary file")?;
+
         // Setup a progress callback that'll send the current download speed to the UI
         let shared_patch_number_ref = &shared_patch_number;
         let shared_state = shared_progress_state.clone();
@@ -232,7 +296,7 @@ async fn download_patches_concurrent_inner(
             let downloaded_bytes_per_sec = {
                 if let Ok(mut shared_state) = shared_state.lock() {
                     shared_state.1 += dl_delta;
-                    if shared_state.0.elapsed() >= one_second {
+                    if shared_state.0.elapsed() >= ONE_SECOND {
                         let downloaded_bytes_per_sec = (shared_state.1 as f32
                             / shared_state.0.elapsed().as_secs_f32())
                         .round() as u64;
@@ -249,13 +313,11 @@ async fn download_patches_concurrent_inner(
             // If speed is "available", update UI
             if let Some(downloaded_bytes_per_sec) = downloaded_bytes_per_sec {
                 block_on(async {
-                    ui_controller
-                        .dispatch_patching_status(PatchingStatus::DownloadInProgress(
-                            shared_patch_number_ref.load(Ordering::SeqCst),
-                            patch_count,
-                            downloaded_bytes_per_sec,
-                        ))
-                        .await;
+                    ui_controller.dispatch_patching_status(PatchingStatus::DownloadInProgress(
+                        shared_patch_number_ref.load(Ordering::SeqCst),
+                        patch_count,
+                        downloaded_bytes_per_sec,
+                    ));
                 });
             }
             last_downloaded_bytes = dl_now;
@@ -272,10 +334,12 @@ async fn download_patches_concurrent_inner(
 
         // Check the archive's integrity if required
         if ensure_integrity
-            && !is_archive_valid(&local_file_path).context(format!(
-                "Failed to check archive's integrity: '{}'",
-                patch_info.file_name
-            ))?
+            && !is_archive_valid(&local_file_path).with_context(|| {
+                format!(
+                    "Failed to check archive's integrity: '{}'",
+                    patch_info.file_name
+                )
+            })?
         {
             return Err(anyhow!("Archive '{}' is corrupt", patch_info.file_name));
         }
@@ -295,7 +359,8 @@ async fn download_patches_concurrent_inner(
 }
 
 fn is_archive_valid(archive_path: impl AsRef<Path>) -> Result<bool> {
-    let mut archive = ThorArchive::open(archive_path.as_ref()).context("Failed to open archive")?;
+    let mut archive =
+        ThorArchive::open(archive_path.as_ref()).with_context(|| "Failed to open archive")?;
     match archive.is_valid() {
         Err(e) => {
             if let GrufError::EntryNotFound = e {
@@ -321,15 +386,17 @@ async fn download_patch_to_file<CB: FnMut(u64, u64)>(
     tmp_file: &mut File,
     mut progress_callback: CB,
 ) -> Result<()> {
-    let patch_file_url = patch_url.join(patch.file_name.as_str()).context(format!(
-        "Invalid file name '{}' given in patch list file",
-        patch.file_name
-    ))?;
+    let patch_file_url = patch_url.join(patch.file_name.as_str()).with_context(|| {
+        format!(
+            "Invalid file name '{}' given in patch list file",
+            patch.file_name
+        )
+    })?;
     let mut resp = client
         .get(patch_file_url)
         .send()
         .await
-        .context(format!("Failed to download file '{}'", patch.file_name))?;
+        .with_context(|| format!("Failed to download file '{}'", patch.file_name))?;
     if !resp.status().is_success() {
         return Err(anyhow!(
             "Patch file '{}' not found on the remote server",
@@ -341,19 +408,19 @@ async fn download_patch_to_file<CB: FnMut(u64, u64)>(
     while let Some(chunk) = resp
         .chunk()
         .await
-        .context(format!("Failed to download file '{}'", patch.file_name))?
+        .with_context(|| format!("Failed to download file '{}'", patch.file_name))?
     {
         tmp_file
             .write_all(&chunk[..])
             .await
-            .context(format!("Failed to download file '{}'", patch.file_name))?;
+            .with_context(|| format!("Failed to download file '{}'", patch.file_name))?;
         downloaded_bytes += chunk.len() as u64;
         progress_callback(downloaded_bytes, bytes_to_download);
     }
-    tmp_file.sync_all().await.context(format!(
-        "Failed to sync downloaded file '{}'",
-        patch.file_name,
-    ))?;
+    tmp_file
+        .sync_all()
+        .await
+        .with_context(|| format!("Failed to sync downloaded file '{}'", patch.file_name,))?;
     Ok(())
 }
 
@@ -375,50 +442,17 @@ async fn apply_patches(
         ))
     })?;
     let patch_count = pending_patch_queue.len();
-    ui_controller
-        .dispatch_patching_status(PatchingStatus::InstallationInProgress(0, patch_count))
-        .await;
+    ui_controller.dispatch_patching_status(PatchingStatus::InstallationInProgress(0, patch_count));
     for (patch_number, pending_patch) in pending_patch_queue.into_iter().enumerate() {
-        // Cancel the patching process if we've been asked to
-        if let Some(e) = check_for_cancellation(patching_thread_rx) {
-            return Err(e);
-        }
+        // Cancel the patching process if we've been asked to or if the other
+        // end of the channel has been disconnected
+        process_incoming_commands(patching_thread_rx)?;
+
         let patch_name = pending_patch.info.file_name;
         log::info!("Processing {}", patch_name);
-        let mut thor_archive = ThorArchive::open(&pending_patch.local_file_path).map_err(|e| {
-            InterruptibleFnError::Err(format!("Cannot read '{}': {}.", patch_name, e))
+        apply_patch(pending_patch.local_file_path, config, &current_working_dir).map_err(|e| {
+            InterruptibleFnError::Err(format!("Failed to apply patch '{}': {}.", patch_name, e))
         })?;
-
-        if thor_archive.use_grf_merging() {
-            // Patch GRF file
-            let target_grf_name = {
-                if thor_archive.target_grf_name().is_empty() {
-                    config.client.default_grf_name.clone()
-                } else {
-                    thor_archive.target_grf_name()
-                }
-            };
-            log::trace!("Target GRF: {:?}", target_grf_name);
-            let grf_patching_method = match config.patching.in_place {
-                true => GrfPatchingMethod::InPlace,
-                false => GrfPatchingMethod::OutOfPlace,
-            };
-            let target_grf_path = current_working_dir.join(&target_grf_name);
-            apply_patch_to_grf(
-                grf_patching_method,
-                config.patching.create_grf,
-                target_grf_path,
-                &mut thor_archive,
-            )
-            .map_err(|e| {
-                InterruptibleFnError::Err(format!("Failed to patch '{}': {}.", target_grf_name, e))
-            })?;
-        } else {
-            // Patch root directory
-            apply_patch_to_disk(&current_working_dir, &mut thor_archive).map_err(|e| {
-                InterruptibleFnError::Err(format!("Failed to apply patch '{}': {}.", patch_name, e))
-            })?;
-        }
         // Update the cache file with the last successful patch's index
         if let Err(e) = write_cache_file(
             &cache_file_path,
@@ -431,14 +465,45 @@ async fn apply_patches(
             log::warn!("Failed to write cache file: {}.", e);
         }
         // Update status
-        ui_controller
-            .dispatch_patching_status(PatchingStatus::InstallationInProgress(
-                1 + patch_number,
-                patch_count,
-            ))
-            .await;
+        ui_controller.dispatch_patching_status(PatchingStatus::InstallationInProgress(
+            1 + patch_number,
+            patch_count,
+        ));
     }
     Ok(())
+}
+
+fn apply_patch(
+    thor_archive_path: impl AsRef<Path>,
+    config: &PatcherConfiguration,
+    current_working_dir: impl AsRef<Path>,
+) -> Result<()> {
+    let mut thor_archive = ThorArchive::open(thor_archive_path.as_ref())?;
+    if thor_archive.use_grf_merging() {
+        // Patch GRF file
+        let target_grf_name = {
+            if thor_archive.target_grf_name().is_empty() {
+                config.client.default_grf_name.clone()
+            } else {
+                thor_archive.target_grf_name()
+            }
+        };
+        log::trace!("Target GRF: {:?}", target_grf_name);
+        let grf_patching_method = match config.patching.in_place {
+            true => GrfPatchingMethod::InPlace,
+            false => GrfPatchingMethod::OutOfPlace,
+        };
+        let target_grf_path = current_working_dir.as_ref().join(&target_grf_name);
+        apply_patch_to_grf(
+            grf_patching_method,
+            config.patching.create_grf,
+            target_grf_path,
+            &mut thor_archive,
+        )
+    } else {
+        // Patch root directory
+        apply_patch_to_disk(current_working_dir, &mut thor_archive)
+    }
 }
 
 #[cfg(test)]
