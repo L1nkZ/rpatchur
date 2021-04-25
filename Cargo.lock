@@ -1473,6 +1473,7 @@ dependencies = [
  "serde_yaml",
  "simple_logger",
  "tempfile",
+ "tinyfiledialogs",
  "tokio 1.5.0",
  "twox-hash",
  "url",

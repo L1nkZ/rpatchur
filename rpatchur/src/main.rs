@@ -12,6 +12,7 @@ use anyhow::Result;
 use clap::{App, Arg};
 use patcher::{patcher_thread_routine, retrieve_patcher_configuration};
 use simple_logger::SimpleLogger;
+use tinyfiledialogs as tfd;
 use tokio::runtime;
 use ui::{UiController, WebViewUserData};
 
@@ -52,7 +53,11 @@ fn main() {
         Err(e) => {
             let err_msg = "Failed to retrieve the patcher's configuration";
             log::error!("{}", err_msg);
-            ui::msg_box(WINDOW_TITLE, format!("<b>Error:</b> {}: {:#}.", err_msg, e));
+            tfd::message_box_ok(
+                "Error",
+                format!("Error: {}: {:#}.", err_msg, e).as_str(),
+                tfd::MessageBoxIcon::Error,
+            );
             return;
         }
         Ok(v) => v,
