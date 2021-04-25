@@ -8,7 +8,7 @@ use log::LevelFilter;
 use std::env;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{App, Arg};
 use patcher::{patcher_thread_routine, retrieve_patcher_configuration};
 use simple_logger::SimpleLogger;
@@ -22,12 +22,12 @@ const PKG_AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 const PKG_DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
 const WINDOW_TITLE: &str = "RPatchur";
 
-fn main() {
+fn main() -> Result<()> {
     SimpleLogger::new()
         .with_level(LevelFilter::Off)
         .with_module_level(PKG_NAME, LevelFilter::Info)
         .init()
-        .expect("Failed to initalize the logger");
+        .with_context(|| "Failed to initalize the logger")?;
 
     // Parse CLI arguments
     let matches = App::new(PKG_NAME)
@@ -45,27 +45,26 @@ fn main() {
         .get_matches();
     if let Some(working_directory) = matches.value_of("working-directory") {
         env::set_current_dir(PathBuf::from(working_directory))
-            .expect("Specified working directory is invalid or inaccessible");
+            .with_context(|| "Specified working directory is invalid or inaccessible")?;
     };
 
-    let tokio_rt = build_tokio_runtime().expect("Failed to build a tokio runtime");
+    let tokio_rt = build_tokio_runtime().with_context(|| "Failed to build a tokio runtime")?;
     let config = match retrieve_patcher_configuration(None) {
         Err(e) => {
             let err_msg = "Failed to retrieve the patcher's configuration";
-            log::error!("{}", err_msg);
             tfd::message_box_ok(
                 "Error",
                 format!("Error: {}: {:#}.", err_msg, e).as_str(),
                 tfd::MessageBoxIcon::Error,
             );
-            return;
+            return Err(e);
         }
         Ok(v) => v,
     };
     // Create a channel to allow the webview's thread to communicate with the patching thread
     let (tx, rx) = flume::bounded(8);
     let webview = ui::build_webview(WINDOW_TITLE, WebViewUserData::new(config.clone(), tx))
-        .expect("Failed to build a web view");
+        .with_context(|| "Failed to build a web view")?;
     let patching_task = tokio_rt.spawn(patcher_thread_routine(
         UiController::new(&webview),
         config,
@@ -78,6 +77,8 @@ fn main() {
             log::error!("Failed to join patching thread: {}", e);
         }
     });
+
+    Ok(())
 }
 
 /// Builds a tokio runtime with a threaded scheduler and a reactor
