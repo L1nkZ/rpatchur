@@ -8,12 +8,15 @@ use log::LevelFilter;
 use std::env;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use patcher::{patcher_thread_routine, retrieve_patcher_configuration};
+use anyhow::{anyhow, Context, Result};
 use simple_logger::SimpleLogger;
 use structopt::StructOpt;
 use tinyfiledialogs as tfd;
 use tokio::runtime;
+
+use patcher::{
+    patcher_thread_routine, retrieve_patcher_configuration, PatcherCommand, PatcherConfiguration,
+};
 use ui::{UiController, WebViewUserData};
 
 const PKG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -44,7 +47,6 @@ fn main() -> Result<()> {
             .with_context(|| "Specified working directory is invalid or inaccessible")?;
     };
 
-    let tokio_rt = build_tokio_runtime().with_context(|| "Failed to build a tokio runtime")?;
     let config = match retrieve_patcher_configuration(None) {
         Err(e) => {
             let err_msg = "Failed to retrieve the patcher's configuration";
@@ -57,28 +59,41 @@ fn main() -> Result<()> {
         }
         Ok(v) => v,
     };
+
     // Create a channel to allow the webview's thread to communicate with the patching thread
     let (tx, rx) = flume::bounded(8);
     let webview = ui::build_webview(WINDOW_TITLE, WebViewUserData::new(config.clone(), tx))
         .with_context(|| "Failed to build a web view")?;
-    let patching_task = tokio_rt.spawn(patcher_thread_routine(
-        UiController::new(&webview),
-        config,
-        rx,
-    ));
-    webview.run().unwrap();
-    // Join the patching task from our synchronous function
-    tokio_rt.block_on(async {
-        if let Err(e) = patching_task.await {
-            log::error!("Failed to join patching thread: {}", e);
-        }
-    });
+
+    // Spawn a patching thread
+    let patching_thread = new_patching_thread(rx, UiController::new(&webview), config);
+    webview
+        .run()
+        .with_context(|| "Failed to run the web view")?;
+    // Join the patching thread
+    patching_thread
+        .join()
+        .map_err(|_| anyhow!("Failed to join patching thread"))?
+        .with_context(|| "Patching thread ran into an error")?;
 
     Ok(())
 }
 
-/// Builds a tokio runtime with a threaded scheduler and a reactor
-fn build_tokio_runtime() -> Result<runtime::Runtime> {
-    let rt = runtime::Builder::new_multi_thread().enable_all().build()?;
-    Ok(rt)
+/// Spawns a new thread that runs a single threaded tokio runtime to execute the patcher routine
+fn new_patching_thread(
+    rx: flume::Receiver<PatcherCommand>,
+    ui_ctrl: UiController,
+    config: PatcherConfiguration,
+) -> std::thread::JoinHandle<Result<()>> {
+    std::thread::spawn(move || {
+        // Build a tokio runtime that runs a scheduler on the current thread and a reactor
+        let tokio_rt = runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .with_context(|| "Failed to build a tokio runtime")?;
+        // Block on the patching task from our synchronous function
+        tokio_rt.block_on(patcher_thread_routine(ui_ctrl, config, rx));
+
+        Ok(())
+    })
 }

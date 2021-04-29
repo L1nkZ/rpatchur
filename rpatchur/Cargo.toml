@@ -22,7 +22,7 @@ web-view = "0.7.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_yaml = "0.8"
 futures = "0.3"
-tokio = { version = "1.5", features = ["macros", "rt-multi-thread", "fs", "sync", "io-util"] }
+tokio = { version = "1.5", features = ["macros", "fs", "sync", "io-util"] }
 reqwest = { version = "0.11", features = ["stream"] }
 url = "2.2"
 tempfile = "3.1"
