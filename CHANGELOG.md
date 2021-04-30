@@ -1,8 +1,17 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Add a new `manual_patch` binding for allowing users to apply manual patches
+
 ### Changed
 - Serialize cache file as JSON
+- Startup errors are displayed with native message boxes
+- Use structopt instead of clap for CLI parsing
+- Switch to tokio's single-threaded runtime
+
+### Fixed
+- Prevent multiple instances of the patcher to update the game at the same time
 
 ## [0.2.3] - 2021-04-15
 ### Changed

@@ -113,7 +113,6 @@ fn apply_single_patch(
         Err(err) => {
             log::error!("{:#}", err);
             ui_controller.dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)));
-            return;
         }
         Ok(lock_file) => {
             // Tell the UI and other processes that we're currently working
@@ -382,14 +381,13 @@ async fn download_patches_concurrent_inner(
         .await?;
 
         // Check the archive's integrity if required
-        if ensure_integrity
-            && !is_archive_valid(&local_file_path).with_context(|| {
-                format!(
-                    "Failed to check archive's integrity: '{}'",
-                    patch_info.file_name
-                )
-            })?
-        {
+        let context = || {
+            format!(
+                "Failed to check archive's integrity: '{}'",
+                patch_info.file_name
+            )
+        };
+        if ensure_integrity && !is_archive_valid(&local_file_path).with_context(context)? {
             return Err(anyhow!("Archive '{}' is corrupt", patch_info.file_name));
         }
 
