@@ -6,6 +6,7 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
+use advisory_lock::{AdvisoryFileLock, FileLockMode};
 use anyhow::{anyhow, Context, Result};
 use futures::executor::block_on;
 use futures::stream::{StreamExt, TryStreamExt};
@@ -53,7 +54,7 @@ pub async fn patcher_thread_routine(
             Ok(cmd) => match cmd {
                 PatcherCommand::Quit => break,
                 PatcherCommand::StartUpdate => {
-                    start_update(&ui_controller, config, rx).await;
+                    update_game(&ui_controller, config, rx).await;
                 }
                 PatcherCommand::ApplyPatch(patch_file_path) => {
                     apply_single_patch(patch_file_path, &ui_controller, config);
@@ -65,26 +66,38 @@ pub async fn patcher_thread_routine(
 }
 
 /// Starts the automatic update process (download + patching)
-async fn start_update(
+async fn update_game(
     ui_controller: &UiController,
     config: &PatcherConfiguration,
     patcher_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) {
-    // Tell the UI that we're currently working
-    ui_controller.set_patch_in_progress(true);
-    let _guard = scopeguard::guard((), |_| {
-        ui_controller.set_patch_in_progress(false);
-    });
-
-    let res = interruptible_update_routine(ui_controller, config, patcher_thread_rx).await;
-    match res {
+    // Try taking the update lock
+    match take_update_lock().with_context(|| "Failed to take the update lock") {
         Err(err) => {
             log::error!("{:#}", err);
             ui_controller.dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)));
+            return;
         }
-        Ok(()) => {
-            ui_controller.dispatch_patching_status(PatchingStatus::Ready);
-            log::info!("Patching finished!");
+        Ok(lock_file) => {
+            // Tell the UI and other processes that we're currently working
+            ui_controller.set_patch_in_progress(true);
+            let _guard = scopeguard::guard((), |_| {
+                let _ = lock_file.unlock();
+                ui_controller.set_patch_in_progress(false);
+            });
+
+            let res = interruptible_update_routine(ui_controller, config, patcher_thread_rx).await;
+            match res {
+                Err(err) => {
+                    log::error!("{:#}", err);
+                    ui_controller
+                        .dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)));
+                }
+                Ok(()) => {
+                    ui_controller.dispatch_patching_status(PatchingStatus::Ready);
+                    log::info!("Patching finished!");
+                }
+            }
         }
     }
 }
@@ -95,43 +108,68 @@ fn apply_single_patch(
     ui_controller: &UiController,
     config: &PatcherConfiguration,
 ) {
-    // Tell the UI that we're currently working
-    ui_controller.set_patch_in_progress(true);
-    let _guard = scopeguard::guard((), |_| {
-        ui_controller.set_patch_in_progress(false);
-    });
-
-    let current_working_dir = env::current_dir();
-    match current_working_dir {
+    // Try taking the update lock
+    match take_update_lock().with_context(|| "Failed to take the update lock") {
         Err(err) => {
-            log::error!("Failed to resolve current working directory: {}.", err);
+            log::error!("{:#}", err);
             ui_controller.dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)));
+            return;
         }
-        Ok(current_working_dir) => {
-            let patch_file_name = patch_file_path
-                .as_ref()
-                .file_name()
-                .unwrap_or_default()
-                .to_str()
-                .unwrap_or_default()
-                .to_string();
-            log::info!("Applying patch '{}'", patch_file_name);
-            let res = apply_patch(patch_file_path, config, current_working_dir);
-            match res {
+        Ok(lock_file) => {
+            // Tell the UI and other processes that we're currently working
+            ui_controller.set_patch_in_progress(true);
+            let _guard = scopeguard::guard((), |_| {
+                let _ = lock_file.unlock();
+                ui_controller.set_patch_in_progress(false);
+            });
+
+            let current_working_dir =
+                env::current_dir().with_context(|| "Failed to resolve current working directory");
+            match current_working_dir {
                 Err(err) => {
                     log::error!("{:#}", err);
                     ui_controller
                         .dispatch_patching_status(PatchingStatus::Error(format!("{:#}", err)));
                 }
-                Ok(()) => {
-                    log::info!("Done");
-                    ui_controller.dispatch_patching_status(PatchingStatus::ManualPatchApplied(
-                        patch_file_name,
-                    ));
+                Ok(current_working_dir) => {
+                    let patch_file_name = patch_file_path
+                        .as_ref()
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    log::info!("Applying patch '{}'", patch_file_name);
+                    let res = apply_patch(patch_file_path, config, current_working_dir);
+                    match res {
+                        Err(err) => {
+                            log::error!("{:#}", err);
+                            ui_controller.dispatch_patching_status(PatchingStatus::Error(format!(
+                                "{:#}",
+                                err
+                            )));
+                        }
+                        Ok(()) => {
+                            log::info!("Done");
+                            ui_controller.dispatch_patching_status(
+                                PatchingStatus::ManualPatchApplied(patch_file_name),
+                            );
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/// Takes an advisory lock that prevents multiple instances of the patcher to
+/// update the game at the same time
+fn take_update_lock() -> Result<std::fs::File> {
+    let lock_file_name = get_update_lock_file_path()?;
+    let lock_file = std::fs::File::create(lock_file_name)?;
+    lock_file.try_lock(FileLockMode::Exclusive)?;
+
+    Ok(lock_file)
 }
 
 /// Main routine of the patching task.
@@ -221,8 +259,19 @@ async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList> {
 
 /// Returns the patcher cache file's name as a `PathBuf` on success.
 fn get_cache_file_path() -> Result<PathBuf> {
+    get_instance_asset_file_name("dat")
+}
+
+/// Returns the patcher update lock file's name as a `PathBuf` on success.
+fn get_update_lock_file_path() -> Result<PathBuf> {
+    get_instance_asset_file_name("lock")
+}
+
+/// Generates asset file names which are associated with the current 'instance'
+/// of the patcher.
+fn get_instance_asset_file_name(extension: impl AsRef<std::ffi::OsStr>) -> Result<PathBuf> {
     let patcher_name = get_patcher_name()?;
-    Ok(PathBuf::from(patcher_name).with_extension("dat"))
+    Ok(PathBuf::from(patcher_name).with_extension(extension))
 }
 
 /// Downloads a list of patches (described with a `ThorPatchList`).
