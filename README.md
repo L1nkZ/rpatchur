@@ -6,11 +6,6 @@ RPatchur
 
 `rpatchur` is a customizable, cross-platform patcher for Ragnarok Online clients.
 
-Screenshot
-----------
-
-![screen](https://i.imgur.com/mE51Iif.png)
-
 Features
 --------
 
@@ -20,17 +15,23 @@ Features
 * GRF file patching (version 0x101, 0x102, 0x103 and 0x200)
 * THOR patch format support
 * Drop-in replacement for the Thor patcher
-* Cross-platform (Windows, Linux, macOS)
 * SSO login support (i.e., can act as a launcher)
+* Manual patching
+* Cross-platform (Windows, Linux, macOS)
 
 Known Limitations
 -----------------
 
 * Can only build GRF files in version 0x200
-* Cannot auto-update
-* No support for RGZ/GPF patch formats
+* Cannot self update automatically
+* No support for `RGZ` and `GPF` patch formats
 * Cannot patch GRF files containing multiple entries pointing to the same
 offset
+
+Screenshot
+----------
+
+![screen](https://i.imgur.com/mE51Iif.png)
 
 Documentation
 -------------
