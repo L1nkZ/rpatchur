@@ -7,19 +7,25 @@ window:
 # Configure the Play button’s behavior
 play:
   path: ragexe.exe        # Relative path to the game executable
-  arguments: ["1sak1"]     # Command-line arguments to pass to the executable
+  arguments: ["1sak1"]    # Command-line arguments to pass to the executable
   exit_on_success: false  # (Optional) Exit the patcher when the game client starts. Defaults to `true`
 
 # Configure the Setup button’s behavior
 setup:
   path: Setup.exe         # Relative path to the setup executable
-  arguments: []            # Command-line arguments to pass to the executable
+  arguments: []           # Command-line arguments to pass to the executable
   exit_on_success: false  # (Optional) Exit the patcher when the setup software starts. Defaults to `false`
 
 web:
   index_url: https://myserver.com/index.html  # URL of the web page to use as the UI
-  plist_url: https://myserver.com/plist.txt   # URL of the plist.txt file containing the list of patches to apply
-  patch_url: https://myserver.com/data/       # URL of the directory containing the patches to apply
+  preferred_patch_server: US Patch Server     # (Optional) Patch server to try first
+  patch_servers:
+    - name: EU Patch Server                          # Name that identifies the patch server
+      plist_url: https://eu.myserver.com/plist.txt   # URL of the plist.txt file containing the list of patches to apply
+      patch_url: https://eu.myserver.com/data/       # URL of the directory containing the patches to apply
+    - name: US Patch Server
+      plist_url: https://us.myserver.com/plist.txt
+      patch_url: https://us.myserver.com/data/
 
 client:
   default_grf_name: myserver.grf  # Name of the GRF to patch when a THOR patch indicates the default GRF

@@ -40,6 +40,13 @@ pub struct SetupConfiguration {
 #[derive(Deserialize, Clone)]
 pub struct WebConfiguration {
     pub index_url: String, // URL of the index file implementing the UI
+    pub preferred_patch_server: Option<String>, // Name of the patch server to use in priority
+    pub patch_servers: Vec<PatchServerInfo>,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct PatchServerInfo {
+    pub name: String,      // Name of that identifies the patch server
     pub plist_url: String, // URL of the plist.txt file
     pub patch_url: String, // URL of the directory containing .thor files
 }

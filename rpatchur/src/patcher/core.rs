@@ -20,6 +20,7 @@ use super::cache::{read_cache_file, write_cache_file, PatcherCache};
 use super::cancellation::{
     process_incoming_commands, wait_for_cancellation, InterruptibleFnError, InterruptibleFnResult,
 };
+use super::config::PatchServerInfo;
 use super::patching::{apply_patch_to_disk, apply_patch_to_grf, GrfPatchingMethod};
 use super::{get_patcher_name, PatcherCommand, PatcherConfiguration};
 use crate::ui::{PatchingStatus, UiController};
@@ -180,12 +181,16 @@ async fn interruptible_update_routine(
     config: &PatcherConfiguration,
     patcher_thread_rx: &mut flume::Receiver<PatcherCommand>,
 ) -> Result<()> {
-    log::info!("Patching started");
-    let patch_list_url = Url::parse(config.web.plist_url.as_str())?;
-    let mut patch_list = fetch_patch_list(patch_list_url)
-        .await
-        .with_context(|| "Failed to retrieve the patch list")?;
-    log::info!("Successfully fetched patch list: {:?}", patch_list);
+    log::info!("Start patching");
+
+    // Find a patch server that we can connect to
+    log::info!("Looking for an available patch server ...");
+    let (mut patch_list, patch_data_url) = find_available_patch_server(
+        config.web.patch_servers.as_slice(),
+        &config.web.preferred_patch_server,
+    )
+    .await?;
+    log::debug!("Successfully fetched patch list: {:?}", patch_list);
 
     // Try to read cache
     let cache_file_path =
@@ -202,9 +207,9 @@ async fn interruptible_update_routine(
     };
 
     // Try fetching patch files
-    log::info!("Downloading patches... ");
+    log::info!("Downloading patches ...");
     let patch_url =
-        Url::parse(config.web.patch_url.as_str()).with_context(|| "Failed to parse 'patch_url'")?;
+        Url::parse(patch_data_url.as_str()).with_context(|| "Failed to parse 'patch_url'")?;
     let tmp_dir = tempfile::tempdir().with_context(|| "Failed to create temporary directory")?;
     let pending_patch_queue = download_patches_concurrent(
         patch_url,
@@ -219,10 +224,10 @@ async fn interruptible_update_routine(
         InterruptibleFnError::Err(msg) => anyhow!("Failed to download patches: {}", msg),
         InterruptibleFnError::Interrupted => anyhow!("Patching was canceled"),
     })?;
-    log::info!("Done");
+    log::info!("Patches have been downloaded");
 
     // Proceed with actual patching
-    log::info!("Applying patches...");
+    log::info!("Applying patches ...");
     apply_patches(
         pending_patch_queue,
         config,
@@ -235,9 +240,78 @@ async fn interruptible_update_routine(
         InterruptibleFnError::Err(msg) => anyhow!("Failed to apply patches: {}", msg),
         InterruptibleFnError::Interrupted => anyhow!("Patching was canceled"),
     })?;
-    log::info!("Done");
+    log::info!("Patches have been applied");
 
     Ok(())
+}
+
+/// Iterates through `server_list` and returns the first available server's info.
+/// `preferred_server_name` is checked first if present.
+async fn find_available_patch_server(
+    server_list: &[PatchServerInfo],
+    preferred_server_name: &Option<String>,
+) -> Result<(ThorPatchList, Url)> {
+    // Probe the preferred server first if it's specified and valid
+    if let Some(preferred_server_name) = preferred_server_name {
+        let preferred_server = server_list
+            .iter()
+            .find(|s| &s.name == preferred_server_name);
+        if let Some(preferred_server) = preferred_server {
+            if let Ok((patch_list, patch_url)) = probe_patch_server(preferred_server).await {
+                return Ok((patch_list, patch_url));
+            } else {
+                log::warn!("'{}' is unavailable", preferred_server_name);
+            }
+        } else {
+            log::warn!(
+                "'{}' isn't in the list of patch servers",
+                preferred_server_name
+            );
+        }
+    }
+
+    // Probe other servers, if any
+    for server in server_list {
+        if let Ok((patch_list, patch_url)) = probe_patch_server(server).await {
+            return Ok((patch_list, patch_url));
+        } else {
+            log::warn!("'{}' is unavailable", server.name);
+        }
+    }
+
+    Err(anyhow!(
+        "None of the patch servers are available at the moment"
+    ))
+}
+
+/// Checks whether a patch server is up or not.
+/// Returns the list of patches served by the server as well as the URL to
+/// download them from.
+async fn probe_patch_server(server_info: &PatchServerInfo) -> Result<(ThorPatchList, Url)> {
+    let client = reqwest::Client::new();
+    // Parse URLs
+    let patch_list_url = Url::parse(server_info.plist_url.as_str())
+        .with_context(|| "Failed to parse 'plist_url'")?;
+    let patch_url = Url::parse(server_info.patch_url.as_str())
+        .with_context(|| "Failed to parse 'patch_url'")?;
+
+    // Fetch plist
+    let patch_list = fetch_patch_list(patch_list_url)
+        .await
+        .with_context(|| "Failed to retrieve the patch list")?;
+
+    // Ensure that the server serves the patches (check the first patch of the list)
+    if let Some(patch_info) = patch_list.get(0) {
+        let patch_resp = client
+            .head(patch_url.join(patch_info.file_name.as_str())?)
+            .send()
+            .await
+            .with_context(|| "Failed to HEAD URL")?;
+        // Return on error
+        patch_resp.error_for_status()?;
+    }
+
+    Ok((patch_list, patch_url))
 }
 
 /// Downloads and parses a 'plist.txt' file located as the URL contained in the
