@@ -17,13 +17,14 @@ Features
 * Drop-in replacement for the Thor patcher
 * SSO login support (i.e., can act as a launcher)
 * Manual patching
+* Can use multiple patch mirrors
 * Cross-platform (Windows, Linux, macOS)
 
 Known Limitations
 -----------------
 
 * Can only build GRF files in version 0x200
-* Cannot self update automatically
+* Cannot automatically update the patcher executable
 * No support for `RGZ` and `GPF` patch formats
 * Cannot patch GRF files containing multiple entries pointing to the same
 offset

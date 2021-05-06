@@ -9,6 +9,10 @@
 - Startup errors are displayed with native message boxes
 - Use structopt instead of clap for CLI parsing
 - Switch to tokio's single-threaded runtime
+- Multiple patch servers can be specified in the configuration file.
+  A new `patch_servers` list field replace the `plist_url` and `patch_url`
+  fields in the configuration. A new optional `preferred_patch_server` has also
+  been added.
 
 ### Fixed
 - Prevent multiple instances of the patcher to update the game at the same time
