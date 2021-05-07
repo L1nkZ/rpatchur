@@ -188,8 +188,13 @@ async fn interruptible_update_routine(
     let (mut patch_list, patch_data_url) = find_available_patch_server(
         config.web.patch_servers.as_slice(),
         &config.web.preferred_patch_server,
+        patcher_thread_rx,
     )
-    .await?;
+    .await
+    .map_err(|e| match e {
+        InterruptibleFnError::Err(msg) => anyhow!(msg),
+        InterruptibleFnError::Interrupted => anyhow!("Patching was canceled"),
+    })?;
     log::debug!("Successfully fetched patch list: {:?}", patch_list);
 
     // Try to read cache
@@ -250,7 +255,8 @@ async fn interruptible_update_routine(
 async fn find_available_patch_server(
     server_list: &[PatchServerInfo],
     preferred_server_name: &Option<String>,
-) -> Result<(ThorPatchList, Url)> {
+    patching_thread_rx: &mut flume::Receiver<PatcherCommand>,
+) -> InterruptibleFnResult<(ThorPatchList, Url)> {
     // Probe the preferred server first if it's specified and valid
     if let Some(preferred_server_name) = preferred_server_name {
         let preferred_server = server_list
@@ -272,6 +278,9 @@ async fn find_available_patch_server(
 
     // Probe other servers, if any
     for server in server_list {
+        // Cancel the patching process if we've been asked to or if the other
+        // end of the channel has been disconnected
+        process_incoming_commands(patching_thread_rx)?;
         if let Ok((patch_list, patch_url)) = probe_patch_server(server).await {
             return Ok((patch_list, patch_url));
         } else {
@@ -279,8 +288,8 @@ async fn find_available_patch_server(
         }
     }
 
-    Err(anyhow!(
-        "None of the patch servers are available at the moment"
+    Err(InterruptibleFnError::Err(
+        "None of the patch servers are available at the moment".to_string(),
     ))
 }
 
@@ -327,6 +336,7 @@ async fn fetch_patch_list(patch_list_url: Url) -> Result<ThorPatchList> {
     }
     let patch_index_content = resp.text().await.with_context(|| "Invalid responde body")?;
     log::info!("Parsing patch index...");
+
     Ok(thor::patch_list_from_string(patch_index_content.as_str()))
 }
 
@@ -344,6 +354,7 @@ fn get_update_lock_file_path() -> Result<PathBuf> {
 /// of the patcher.
 fn get_instance_asset_file_name(extension: impl AsRef<std::ffi::OsStr>) -> Result<PathBuf> {
     let patcher_name = get_patcher_name()?;
+
     Ok(PathBuf::from(patcher_name).with_extension(extension))
 }
 
