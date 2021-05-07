@@ -23,7 +23,6 @@ const PKG_NAME: &str = env!("CARGO_PKG_NAME");
 const PKG_VERSION: &str = env!("CARGO_PKG_VERSION");
 const PKG_AUTHORS: &str = env!("CARGO_PKG_AUTHORS");
 const PKG_DESCRIPTION: &str = env!("CARGO_PKG_DESCRIPTION");
-const WINDOW_TITLE: &str = "RPatchur";
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = PKG_NAME, version = PKG_VERSION, author = PKG_AUTHORS, about = PKG_DESCRIPTION)]
@@ -62,8 +61,12 @@ fn main() -> Result<()> {
 
     // Create a channel to allow the webview's thread to communicate with the patching thread
     let (tx, rx) = flume::bounded(32);
-    let webview = ui::build_webview(WINDOW_TITLE, WebViewUserData::new(config.clone(), tx))
-        .with_context(|| "Failed to build a web view")?;
+    let window_title = config.window.title.clone();
+    let webview = ui::build_webview(
+        window_title.as_str(),
+        WebViewUserData::new(config.clone(), tx),
+    )
+    .with_context(|| "Failed to build a web view")?;
 
     // Spawn a patching thread
     let patching_thread = new_patching_thread(rx, UiController::new(&webview), config);

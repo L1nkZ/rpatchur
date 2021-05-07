@@ -1,5 +1,6 @@
 # Configure the patcher's window
 window:
+  title: RPatchur   # Title of the main window
   width: 780        # Width of the main window (in pixels)
   height: 580       # Height of the main window (in pixels)
   resizable: false  # Make the main window resizable

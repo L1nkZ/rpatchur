@@ -1,8 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.3.0] - 2021-05-07
 ### Added
 - Add a new `manual_patch` binding for allowing users to apply manual patches
+- Add a `window.title` field in the configuration that sets the window's title 
 
 ### Changed
 - Serialize cache file as JSON
@@ -10,8 +13,8 @@
 - Use structopt instead of clap for CLI parsing
 - Switch to tokio's single-threaded runtime
 - Multiple patch servers can be specified in the configuration file.
-  A new `patch_servers` list field replace the `plist_url` and `patch_url`
-  fields in the configuration. A new optional `preferred_patch_server` has also
+  A new `web.patch_servers` list field replace the `web.plist_url` and `web.patch_url`
+  fields in the configuration. A new optional `web.preferred_patch_server` has also
   been added.
 
 ### Fixed

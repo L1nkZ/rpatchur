@@ -95,12 +95,12 @@ impl Drop for WebViewUserData {
 }
 
 /// Creates a `WebView` object with the appropriate settings for our needs.
-pub fn build_webview(
-    window_title: &'_ str,
+pub fn build_webview<'a>(
+    title: &'a str,
     user_data: WebViewUserData,
-) -> web_view::WVResult<WebView<'_, WebViewUserData>> {
+) -> web_view::WVResult<WebView<'a, WebViewUserData>> {
     web_view::builder()
-        .title(window_title)
+        .title(title)
         .content(Content::Url(user_data.patcher_config.web.index_url.clone()))
         .size(
             user_data.patcher_config.window.width,

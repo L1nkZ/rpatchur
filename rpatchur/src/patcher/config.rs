@@ -18,6 +18,7 @@ pub struct PatcherConfiguration {
 
 #[derive(Deserialize, Clone)]
 pub struct WindowConfiguration {
+    pub title: String,
     pub width: i32,
     pub height: i32,
     pub resizable: bool,
