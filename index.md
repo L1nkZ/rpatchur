@@ -5,13 +5,15 @@ RPatchur is a customizable, cross-platform patcher for Ragnarok Online clients.
 ## Features
 
 * Customizable, web-based UI
-* Cross-platform (Windows, Linux, macOS)
 * Configurable through an external YAML file
 * HTTP/HTTPS support
 * GRF file patching (version 0x101, 0x102, 0x103 and 0x200)
 * THOR patch format support
 * Drop-in replacement for the Thor patcher
 * SSO login support (i.e., can act as a launcher)
+* Manual patching
+* Can use multiple patch mirrors
+* Cross-platform (Windows, Linux, macOS)
 
 ## How to Build
 
@@ -58,7 +60,7 @@ page to use as the patcher's UI.
 
 ```
 $ ./rpatchur --help
-rpatchur 0.2.3
+rpatchur 0.3.0
 LinkZ <wanthost@gmail.com>
 A customizable patcher for Ragnarok Online
 
@@ -84,6 +86,7 @@ You can find an example of a configuration file
 Here's a description of each field used in the configuration file.
 
 * `window`
+  * `title` *(string):* Title of the main window. 
   * `width` *(int):* Width of the main window (in pixels).
   * `height` *(int):* Height of the main window (in pixels).
   * `resizable` *(bool):* Make the main window resizable.
@@ -101,10 +104,14 @@ Here's a description of each field used in the configuration file.
     successfully started. Defaults to `false`.
 * `web`
   * `index_url` *(string):* URL of the web page to use as the UI.
-  * `plist_url` *(string):* URL of the *plist.txt* file containing the list of
-  patches to apply.
-  * `patch_url` *(string):* URL of the directory containing the patches to
-  apply.
+  * `preferred_patch_server` *(string, optional)*: Name of the patch server to
+  use in priority.
+  * `patch_servers` *(list):* 
+    * `name` *(string):* Name that identifies the patch server.
+    * `plist_url` *(string):* URL of the *plist.txt* file containing the list of
+    patches to apply.
+    * `patch_url` *(string):* URL of the directory containing the patches to
+    apply.
 * `client`
   * `default_grf_name` *(string):* Name of the GRF to patch when a THOR patch
   indicates the *default* GRF.
@@ -146,6 +153,8 @@ There are a few JavaScript functions that can be called during execution.
 * `start_update`: Starts the update process (to download and apply patches).
 * `cancel_update`: Cancels the update process if started.
 * `reset_cache`: Resets the patcher's cache (to force a re-patch).
+* `manual_patch`: Opens a file browser window that lets the user manually select
+  a patch to apply (as a THOR archive).
 
 These functions do not take any argument and have to be invoked through a
 particular `external.invoke` function. For example, to invoke the `setup`
@@ -187,6 +196,9 @@ per second.
 patcher is currently applying patches. `nbDownloaded` is an `int` that
 represents the number of patches that have been applied. `nbTotal` is an
 `int` that represents the total number of patches that will be applied.
+* `patchingStatusPatchApplied(fileName)`: Indicates that a manual patch
+has been applied successfully. `fileName` is a `string` that contains the
+name of the patch file that's been used.
 
 You can define these callbacks to receive useful information to display to the
 user.
