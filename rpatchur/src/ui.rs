@@ -250,6 +250,12 @@ fn handle_json_request(webview: &mut WebView<WebViewUserData>, request: &str) {
                 let function_params = json_req["parameters"].clone();
                 match function_name {
                     "login" => handle_login(webview, function_params),
+                    "open_url" => {
+                        match open::that(json_req["url"].to_string()) {
+                            Ok(_exit_status) => {},
+                            Err(why) => {log::error!("Error open_url function: '{}'", why);}
+                        }
+                    },
                     _ => {
                         log::error!("Unknown function '{}'", function_name);
                     }
