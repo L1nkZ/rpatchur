@@ -250,6 +250,7 @@ fn handle_json_request(webview: &mut WebView<WebViewUserData>, request: &str) {
                 let function_params = json_req["parameters"].clone();
                 match function_name {
                     "login" => handle_login(webview, function_params),
+                    "open_url" => handle_open_url(function_params),
                     _ => {
                         log::error!("Unknown function '{}'", function_name);
                     }
@@ -289,6 +290,32 @@ fn handle_login(webview: &mut WebView<WebViewUserData>, parameters: Value) {
             );
             start_game_client(webview, &play_arguments);
         }
+    }
+}
+
+/// Parameters expected for the open_url function
+#[derive(Deserialize)]
+struct OpenUrlParameters {
+    url: String,
+}
+
+/// Opens an URL with the native URL Handler
+fn handle_open_url(parameters: Value) {
+    let result: serde_json::Result<OpenUrlParameters> = serde_json::from_value(parameters);
+    match result {
+        Err(e) => log::error!("Invalid arguments given for 'open_url': {}", e),
+        Ok(params) => match open::that(params.url) {
+            Ok(exit_status) => {
+                if !exit_status.success() {
+                    if let Some(code) = exit_status.code() {
+                        log::error!("Command returned non-zero exit status {}!", code);
+                    }
+                }
+            }
+            Err(why) => {
+                log::error!("Error open_url function: '{}'", why);
+            }
+        },
     }
 }
 
