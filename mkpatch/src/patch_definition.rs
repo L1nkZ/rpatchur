@@ -19,6 +19,7 @@ pub struct PatchEntry {
     pub relative_path: String,
     #[serde(default)] // Defaults to false
     pub is_removed: bool,
+    pub grf_path: Option<String>
 }
 
 pub fn parse_patch_definition(file_path: impl AsRef<Path>) -> Result<PatchDefinition> {

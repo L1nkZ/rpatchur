@@ -96,6 +96,8 @@ where
     )?;
     for entry in patch_definition.entries {
         let win32_relative_path = win32_path(&entry.relative_path);
+        let target_win32_relative_path = entry.grf_path.unwrap_or(win32_relative_path.clone());
+
         if entry.is_removed {
             log::trace!("'{}' will be REMOVED", &win32_relative_path);
             archive_builder.append_file_removal(win32_relative_path);
@@ -107,9 +109,9 @@ where
             .join(posix_path(entry.relative_path));
         if native_path.is_file() {
             // Path points to a single file
-            log::trace!("'{}' will be UPDATED", &win32_relative_path);
+            log::trace!("'{}' will be UPDATED", &target_win32_relative_path);
             let file = File::open(native_path)?;
-            archive_builder.append_file_update(win32_relative_path, file)?;
+            archive_builder.append_file_update(target_win32_relative_path, file)?;
         } else if native_path.is_dir() {
             // Path points to a directory
             append_directory_update(
