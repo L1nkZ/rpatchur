@@ -96,7 +96,7 @@ where
     )?;
     for entry in patch_definition.entries {
         let win32_relative_path = win32_path(&entry.relative_path);
-        let target_win32_relative_path = entry.grf_path.unwrap_or(win32_relative_path.clone());
+        let target_win32_relative_path = entry.in_grf_path.unwrap_or(win32_relative_path.clone());
 
         if entry.is_removed {
             log::trace!("'{}' will be REMOVED", &win32_relative_path);
