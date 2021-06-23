@@ -9,3 +9,6 @@ entries:
     is_removed: true
   # Add all the files that the (local) folder contains
   - relative_path: data\model
+  # Change the path in the grf.
+  - relative_path: data-release\clientinfo.xml
+    in_grf_path: data\sclientinfo.xml
