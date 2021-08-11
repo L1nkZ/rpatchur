@@ -20,7 +20,9 @@ To deploy using an Azure Storage Account, complete the following procedure.
     1. Upload the web content as performed in step 3iv.
 
 ![Example Storage Account](https://user-images.githubusercontent.com/50342848/129118235-b4712654-38b9-4520-87c9-8e1b6eadfc91.png)
+
 **Create the Patch Container**
 ![Example Static Website](https://user-images.githubusercontent.com/50342848/129118227-641a9da2-d2e6-4eb3-b33d-09e75d6ce5ed.png)
+
 **Create the Patch Static Website**
 
