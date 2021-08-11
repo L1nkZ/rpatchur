@@ -7,15 +7,20 @@ In addition to using a HTTP web page, it is possible to host patches and the UI 
 * ability to readily deploy patches with a content delivery network (CDN).
 
 To deploy using an Azure Storage Account, complete the following procedure.
-1. Login to the Azure Portal.
-2. Create an (https://docs.microsoft.com/en-us/azure/storage/common/storage-account-create?tabs=azure-portal)[Azure Storage Account].
-3. Create a Container within the Storage Account and upload your patches to it.
-  a. On the left sidebar navigation plane, under _Data storage_, select _Containers_.
-  b. On the top navigation plane, select _+ Container_ and complete the container creation wizard.
-  c. Click on the newly cdfreated Container to navigate to it.
-  d. Click upload to upload your patches to the Container with your desired file architecture (e.g. nested or flat).
-4. Create a Static website within the Storage Account.
-  a. On the left sidebar navigation plane, under Data management, select _Static website_.
-  b. Toggle the Static website by clicking _Enable_, then click _Save_.
-  c. Upload the web content as performed in step 3d.
+1. Login to the [Azure Portal](https://portal.azure.com).
+1. Create an [Azure Storage Account](https://docs.microsoft.com/en-us/azure/storage/common/storage-account-create?tabs=azure-portal).
+1. Create a Container within the Storage Account and upload your patches to it.
+    1. On the left sidebar navigation plane, under _Data storage_, select _Containers_.
+    1. On the top navigation plane, select _+ Container_ and complete the container creation wizard.
+    1. Click on the newly created Container to navigate to it.
+    1. Click _Upload_ to upload your patches to the Container with your desired file architecture (e.g. nested or flat).
+1. Create a Static website within the Storage Account.
+    1. On the left sidebar navigation plane, under Data management, select _Static website_.
+    1. Toggle the Static website by clicking _Enable_, then click _Save_.
+    1. Upload the web content as performed in step 3iv.
+
+![Example Storage Account](https://user-images.githubusercontent.com/50342848/129118235-b4712654-38b9-4520-87c9-8e1b6eadfc91.png)
+**Create the Patch Container**
+![Example Static Website](https://user-images.githubusercontent.com/50342848/129118227-641a9da2-d2e6-4eb3-b33d-09e75d6ce5ed.png)
+**Create the Patch Static Website**
 
