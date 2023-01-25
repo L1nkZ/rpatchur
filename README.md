@@ -49,8 +49,11 @@ Building
 --------
 
 The `rpatchur` directory contains the actual patcher code (UI, archive merging, etc.).
+
 The `mkpatch` directory contains a THOR patch archive generation utility.
+
 The `gruf` directory contains the core library for parsing and building GRF and THOR archives.
+
 
 To clone the repository and build everything, simply run:
 ```
@@ -60,6 +63,11 @@ $ cargo build --release
 ```
 
 Note: Rust 1.49 or later is required.
+
+Note: For targetting 32bit Windows when building on a 64bit system, you need to manually add the target with `rustup target add i686-pc-windows-msvc`. You can now run:
+```
+$ cargo build --target=i686-pc-windows-msvc --release
+```
 
 ### Cross Compilation
 
